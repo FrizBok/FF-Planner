@@ -10,7 +10,7 @@ ausschließlich über die Kachel im Portal (Single Sign-on).
 ## Ablauf
 
 1. **Termin anlegen** (Planer): Titel, Datum, Treffen/Beginn/Ende, Ort, Beschreibung, optional Rückmeldefrist und die
-   **Stellen** (z. B. 1× Regie, 3× Kamera, 1× Ton – aus der Stellen-Liste oder frei benannt). Als Entwurf oder gleich freigeben.
+   **Stellen** (Regie, Grafik, Ton, Spec, Replay, Mod, Caster – mit Anzahl, über „Andere …“ auch frei benannt). Als Entwurf oder gleich freigeben.
 2. **Freigeben** → alle Mitglieder sehen den Termin und tragen ein:
    **Vor Ort** (grün) · **Später** mit Uhrzeit „ab wann“ (orange) · **Online** (blau) · **Kann nicht** (rot) –
    jeweils mit Kommentar, außer bei „Kann nicht“ optional mit Wunsch-Stellen („würde gern Kamera machen“).

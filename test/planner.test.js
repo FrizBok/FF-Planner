@@ -131,7 +131,8 @@ test('Ablauf: Termin anlegen → freigeben → Rückmeldungen → Besetzung → 
   assert.equal((await paula.post('/api/events', { title: 'X', date: '1.5.2030' })).status, 400);
 
   const pos = (await paula.get('/api/positions')).data.positions;
-  const kamera = pos.find((p) => p.name === 'Kamera');
+  assert.deepEqual(pos.map((p) => p.name), ['Regie', 'Grafik', 'Ton', 'Spec', 'Replay', 'Mod', 'Caster']);
+  const kamera = pos.find((p) => p.name === 'Caster');
   const c = await paula.post('/api/events', {
     title: 'FrankenFinals Finale', date: '2030-05-01', start_time: '18:00', end_time: '23:00', meet_time: '15:00', location: 'Halle 3',
     slots: [{ position_id: kamera.id, needed: 2 }, { name: 'Regie', needed: 1 }],
@@ -148,7 +149,7 @@ test('Ablauf: Termin anlegen → freigeben → Rückmeldungen → Besetzung → 
   let ev = (await max.get(`/api/events/${id}`)).data;
   assert.equal(ev.respond_open, true);
   assert.equal(ev.people, undefined); // Personenliste nur für Planer
-  const camSlot = ev.slots.find((s) => s.name === 'Kamera');
+  const camSlot = ev.slots.find((s) => s.name === 'Caster');
   assert.equal((await max.put(`/api/events/${id}/response`, { status: 'vielleicht' })).status, 400);
   ev = (await max.put(`/api/events/${id}/response`, { status: 'yes', comment: 'ab 16 Uhr', wishes: [camSlot.id, 9999] })).data;
   assert.equal(ev.my_response.status, 'yes');
@@ -167,22 +168,22 @@ test('Ablauf: Termin anlegen → freigeben → Rückmeldungen → Besetzung → 
   // Besetzung
   assert.equal((await max.post(`/api/events/${id}/assign`, { slot_id: camSlot.id, sub: MAX.sub })).status, 403);
   ev = (await paula.post(`/api/events/${id}/assign`, { slot_id: camSlot.id, sub: MAX.sub })).data;
-  assert.equal(ev.slots.find((s) => s.name === 'Kamera').open, 1);
+  assert.equal(ev.slots.find((s) => s.name === 'Caster').open, 1);
   assert.equal((await paula.post(`/api/events/${id}/assign`, { slot_id: camSlot.id, sub: MAX.sub })).status, 400); // doppelt
   ev = (await paula.post(`/api/events/${id}/assign`, { slot_id: camSlot.id, sub: GAST.sub })).data;
   assert.equal((await paula.post(`/api/events/${id}/assign`, { slot_id: camSlot.id, sub: NIE.sub })).status, 400); // voll
   assert.equal(ev.open, 1); // Regie fehlt noch
   assert.deepEqual(ev.open_slots.map((s) => s.name), ['Regie']);
   assert.equal((await gast.get(`/api/events/${id}`)).status, 200);
-  assert.deepEqual((await gast.get(`/api/events/${id}`)).data.my_slots, ['Kamera']);
+  assert.deepEqual((await gast.get(`/api/events/${id}`)).data.my_slots, ['Caster']);
 
   // Anzahl unter die Besetzung verringern → abgelehnt
   const slots = ev.slots.map((s) => ({ id: s.id, name: s.name, position_id: s.position_id, needed: s.needed }));
-  assert.equal((await paula.patch(`/api/events/${id}`, { slots: slots.map((s) => (s.name === 'Kamera' ? { ...s, needed: 1 } : s)) })).status, 400);
+  assert.equal((await paula.patch(`/api/events/${id}`, { slots: slots.map((s) => (s.name === 'Caster' ? { ...s, needed: 1 } : s)) })).status, 400);
 
   // Meine Einsätze & offene Stellen
   const mine = (await max.get('/api/events?scope=mine')).data.events;
-  assert.deepEqual(mine.map((e) => [e.id, e.my_slots]), [[id, ['Kamera']]]);
+  assert.deepEqual(mine.map((e) => [e.id, e.my_slots]), [[id, ['Caster']]]);
   const open = (await max.get('/api/events?scope=open')).data.events;
   assert.equal(open[0].id, id);
 
@@ -192,14 +193,14 @@ test('Ablauf: Termin anlegen → freigeben → Rückmeldungen → Besetzung → 
   assert.equal((await paula.put(`/api/events/${id}/response`, { status: 'later', from_time: '19:30', sub: MAX.sub })).status, 200);
 
   // Einteilung entfernen
-  const asg = ev.slots.find((s) => s.name === 'Kamera').assigned.find((a) => a.sub === GAST.sub);
+  const asg = ev.slots.find((s) => s.name === 'Caster').assigned.find((a) => a.sub === GAST.sub);
   assert.equal((await paula.del(`/api/events/${id}/assign/${asg.id}`)).status, 200);
   assert.equal((await gast.get(`/api/events/${id}`)).status, 404);
 
   // Kalender-Datei
   const ics = await (await max.raw(`/api/events/${id}/ics`)).text();
   assert.match(ics, /BEGIN:VEVENT/);
-  assert.match(ics, /SUMMARY:FrankenFinals Finale \(Kamera\)/);
+  assert.match(ics, /SUMMARY:FrankenFinals Finale \(Caster\)/);
   assert.match(ics, /DTSTART;TZID=Europe\/Berlin:20300501T150000/);
 
   // Verlauf und Löschen: freigegebene Termine nur Planer-Admin
@@ -208,7 +209,7 @@ test('Ablauf: Termin anlegen → freigeben → Rückmeldungen → Besetzung → 
   const copy = (await paula.post(`/api/events/${id}/duplicate`, { date: '2030-06-01' })).data.id;
   const cp = (await paula.get(`/api/events/${copy}`)).data;
   assert.equal(cp.status, 'draft');
-  assert.deepEqual(cp.slots.map((s) => [s.name, s.needed, s.assigned.length]), [['Kamera', 2, 0], ['Regie', 1, 0]]);
+  assert.deepEqual(cp.slots.map((s) => [s.name, s.needed, s.assigned.length]), [['Caster', 2, 0], ['Regie', 1, 0]]);
   assert.equal((await paula.del(`/api/events/${copy}`)).status, 200);
   assert.equal((await chef.del(`/api/events/${id}`)).status, 200);
 });

@@ -112,10 +112,27 @@ if (!db.prepare('PRAGMA table_info(responses)').all().some((c) => c.name === 'fr
 }
 db.exec("UPDATE responses SET status='later' WHERE status='maybe'");
 
-// Beim ersten Start eine sinnvolle Stellen-Liste anlegen (lässt sich unter „Verwaltung“ ändern)
-if (db.prepare('SELECT COUNT(*) AS n FROM positions').get().n === 0) {
+// Stellen-Liste (Vorlage beim Anlegen von Terminen, änderbar unter „Verwaltung → Stellen“).
+// Freie Stellen gibt es beim Anlegen zusätzlich über „Andere …“.
+export const DEFAULT_POSITIONS = ['Regie', 'Grafik', 'Ton', 'Spec', 'Replay', 'Mod', 'Caster'];
+const OLD_DEFAULT = ['Regie', 'Bildmischer', 'Kamera', 'Ton', 'Grafik', 'Kommentar', 'Licht', 'Producer'];
+{
+  const cur = db.prepare('SELECT * FROM positions ORDER BY sort, id').all();
   const ins = db.prepare('INSERT INTO positions (name, sort) VALUES (?, ?)');
-  ['Regie', 'Bildmischer', 'Kamera', 'Ton', 'Grafik', 'Kommentar', 'Licht', 'Producer'].forEach((n, i) => ins.run(n, i));
+  if (!cur.length) DEFAULT_POSITIONS.forEach((n, i) => ins.run(n, i));
+  // Ältere Installationen mit der unveränderten ersten Vorlage einmalig auf die neue Liste umstellen
+  // (bestehende Termine behalten ihre Stellen, nur die Vorlage ändert sich)
+  else if (cur.length === OLD_DEFAULT.length && cur.every((p, i) => p.name === OLD_DEFAULT[i] && p.active)) {
+    db.exec('BEGIN');
+    try {
+      for (const p of cur) if (!DEFAULT_POSITIONS.includes(p.name)) db.prepare('DELETE FROM positions WHERE id=?').run(p.id);
+      DEFAULT_POSITIONS.forEach((n, i) => {
+        if (cur.some((p) => p.name === n)) db.prepare('UPDATE positions SET sort=? WHERE name=?').run(i, n);
+        else ins.run(n, i);
+      });
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
 }
 
 export function tx(fn) {
