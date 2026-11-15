@@ -284,10 +284,8 @@ button.resp-person:hover { background: var(--surface-2); }
 .chips.skills { margin-top: 6px; }
 .wish-chips button.sel.skill { border-color: var(--accent); color: var(--accent-2); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
-/* ---------- Kalender-Abo */
-.cal-card { margin-bottom: 18px; }
-.cal-card .card-head { align-items: flex-start; }
-.cal-card .mod-ico { width: 40px; height: 40px; border-radius: 12px; flex: none; }
-.cal-card .copy-field { display: flex; gap: 8px; }
-.cal-card .copy-field .input { flex: 1; min-width: 0; font-size: 12.5px; }
-@media (max-width: 600px) { .cal-card .copy-field { flex-direction: column; } }
+/* ---------- Kalender-Abo (Dialog) */
+.cal-more { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 13.5px; color: var(--text-2); }
+.cal-more summary { cursor: pointer; color: var(--muted); }
+.cal-more ul { margin: 10px 0; padding-left: 18px; line-height: 1.6; }
+.cal-more b { color: var(--text); font-weight: 600; }

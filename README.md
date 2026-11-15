@@ -27,7 +27,7 @@ Weitere Seiten: **Meine Einsätze** (mit **Kalender-Abo**), **Verwaltung** (Pers
 
 - **Fähigkeiten pro Person** (Planer, *Verwaltung → Personen*): z. B. Regie, Replay. Beim Einteilen stehen Passende oben und
   sind mit „✓ Replay“ markiert.
-- **Kalender-Abo**: persönlicher, geheimer Link (`/cal/<token>.ics`), den Handy-, Google- oder Outlook-Kalender regelmäßig abrufen –
+- **Kalender-Abo**: persönlicher, geheimer Link (`/cal/<token>.ics`, unter *Meine Einsätze → Kalender-Abo* oder im Benutzermenü), den Handy-, Google- oder Outlook-Kalender regelmäßig abrufen –
   alle eigenen Einsätze (ohne Absagen), Änderungen kommen von selbst nach. „Neuer Link“ macht den alten ungültig.
   Die Adresse im Link kommt aus der Anfrage (hinter Nginx: `TRUST_PROXY=true`) oder aus `APP_URL`.
 - **Portal-Startseite**: „Deine nächsten Einsätze“ und „x Termine warten auf deine Rückmeldung“ – das Portal fragt dafür

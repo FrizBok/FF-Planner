@@ -50,6 +50,7 @@ function shell(path, ...content) {
   const portalUrl = S.status?.portal?.url;
   const userBtn = h('button', { class: 'user-btn', onclick: (e) => menu(e.currentTarget, [
     portalUrl ? { label: 'Zum Portal', icon: 'grid', onClick: () => { location.href = portalUrl + '/'; } } : null,
+    { label: 'Kalender-Abo', icon: 'calendarCheck', onClick: calendarDialog },
     { label: document.documentElement.dataset.theme === 'light' ? 'Dunkles Design' : 'Helles Design', icon: document.documentElement.dataset.theme === 'light' ? 'moon' : 'sun', onClick: () => document.querySelector('.topbar .theme-toggle')?.click() },
     { sep: true },
     { label: 'Abmelden', icon: 'logout', onClick: logout },
@@ -230,9 +231,11 @@ async function openPage() {
 async function minePage() {
   const list = h('div', { class: 'ev-list' }, h('div', { class: 'empty' }, 'Lädt …'));
   shell('/meine',
-    h('div', { class: 'page-head' }, h('span', { class: 'label' }, 'TERMINPLANUNG'), h('h1', null, 'Meine Einsätze'),
-      h('p', { class: 'sub' }, 'Termine, für die du eingeteilt bist. Bitte bestätige neue Einteilungen mit „Passt“.')),
-    calendarCard(),
+    h('div', { class: 'page-head row' },
+      h('div', null, h('span', { class: 'label' }, 'TERMINPLANUNG'), h('h1', null, 'Meine Einsätze'),
+        h('p', { class: 'sub' }, 'Termine, für die du eingeteilt bist. Bitte bestätige neue Einteilungen mit „Passt“.')),
+      h('div', { class: 'spacer' }),
+      h('button', { class: 'btn', onclick: calendarDialog }, icon('calendarCheck'), 'Kalender-Abo')),
     S.user.skills?.length ? h('p', { class: 'hint', style: { margin: '0 0 16px' } }, 'Deine Fähigkeiten laut Planern: ' + S.user.skills.join(', ')) : null,
     list);
   let data;
@@ -241,23 +244,27 @@ async function minePage() {
   fill(list, groupByMonth(data.events));
 }
 
-/** Kalender-Abo: persönlicher Link, den Handy-/Outlook-Kalender regelmäßig abrufen */
-function calendarCard() {
-  const box = h('div', { class: 'card card-pad cal-card' });
+/** Kalender-Abo (Dialog, erreichbar über „Meine Einsätze“ und das Benutzermenü) */
+async function calendarDialog() {
+  const box = h('div', { class: 'cal-dialog' }, h('div', { class: 'resp-empty' }, 'Lädt …'));
+  modal({ title: 'Kalender-Abo', body: box });
   const paint = (c) => fill(box,
-    h('div', { class: 'card-head' }, h('span', { class: 'mod-ico' }, icon('calendarCheck')), h('div', null, h('h3', null, 'Kalender-Abo'),
-      h('small', { class: 'hint' }, 'Alle deine Einsätze automatisch im Handy- oder Outlook-Kalender – Änderungen kommen von selbst nach.'))),
-    h('div', { class: 'copy-field' }, h('input', { class: 'input mono', value: c.url, readonly: true, onclick: (e) => e.target.select() }),
-      h('button', { class: 'btn', onclick: () => copyText(c.url) }, icon('copy'), 'Kopieren')),
-    h('div', { class: 'row', style: { marginTop: '10px' } },
+    h('p', { class: 'hint', style: { marginTop: 0 } }, 'Deine Einsätze automatisch im Handy-, Google- oder Outlook-Kalender. Änderungen kommen von selbst nach.'),
+    h('div', { class: 'row' },
       h('a', { class: 'btn primary', href: c.webcal }, icon('calendar'), 'Im Kalender abonnieren'),
-      h('button', { class: 'btn ghost', onclick: async () => {
+      h('button', { class: 'btn', onclick: () => copyText(c.url) }, icon('copy'), 'Link kopieren')),
+    h('details', { class: 'cal-more' },
+      h('summary', null, 'Hilfe & Link zurücksetzen'),
+      h('ul', null,
+        h('li', null, h('b', null, 'iPhone/Mac: '), '„Im Kalender abonnieren“ antippen.'),
+        h('li', null, h('b', null, 'Google Kalender: '), 'Link kopieren → Weitere Kalender → Per URL.'),
+        h('li', null, h('b', null, 'Outlook: '), 'Kalender hinzufügen → Aus dem Internet.')),
+      h('p', { class: 'hint' }, 'Gib den Link nicht weiter – wer ihn hat, sieht deine Einsätze. Falls doch passiert:'),
+      h('button', { class: 'btn sm ghost', onclick: async () => {
         if (!(await confirmDialog('Der bisherige Link funktioniert danach nicht mehr – auch nicht in Kalendern, in denen du ihn schon eingetragen hast.', { title: 'Neuen Link erzeugen?', okLabel: 'Neuer Link', danger: false }))) return;
-        busy(null, async () => { paint(await post('/api/me/calendar/reset')); toast('Neuer Link erzeugt', 'ok'); });
-      } }, icon('rotate'), 'Neuer Link')),
-    h('small', { class: 'hint', style: { display: 'block', marginTop: '10px' } }, 'iPhone: „Im Kalender abonnieren“ antippen. Google Kalender: Link kopieren → Weitere Kalender → Per URL. Outlook: Kalender hinzufügen → Aus dem Internet. Den Link nicht weitergeben – wer ihn hat, sieht deine Einsätze.'));
-  get('/api/me/calendar').then(paint).catch((e) => fill(box, h('div', { class: 'form-error' }, e.message)));
-  return box;
+        busy(null, async () => { paint(await post('/api/me/calendar/reset')); toast('Neuer Link erzeugt – bitte neu abonnieren', 'ok'); });
+      } }, icon('rotate'), 'Neuen Link erzeugen')));
+  try { paint(await get('/api/me/calendar')); } catch (e) { fill(box, h('div', { class: 'form-error' }, e.message)); }
 }
 
 /* ------------------------------------------------------------ Seite: Termin */
