@@ -1,5 +1,5 @@
 // FF-Planner – Oberfläche (ohne Framework, Design wie im Portal)
-import { h, icon, toast, fill, menu, modal, popover, closePop, confirmDialog, themeToggle } from './ui.js';
+import { h, icon, toast, fill, menu, modal, popover, closePop, confirmDialog, themeToggle, copyText } from './ui.js';
 import { get, post, put, patch, del, CLIENT_ID, initials, fmtDay, fmtDayNum, fmtMonShort, fmtMonth, fmtLong, fmtShort, fmtAgo, timeRange, daysUntil } from './api.js';
 
 const S = { user: null, status: null, positions: null };
@@ -110,6 +110,34 @@ function respButtons(ev, { big = false, onDone } = {}) {
   return wrap;
 }
 
+/* ------------------------------------------------------------ Einteilung bestätigen */
+const ASG = {
+  pending: { label: 'Bitte bestätigen', chip: 'orange', icon: 'help' },
+  confirmed: { label: 'Bestätigt', chip: 'green', icon: 'check' },
+  declined: { label: 'Abgesagt', chip: 'red', icon: 'x' },
+};
+/** Antwort auf eine Einteilung; „Geht doch nicht“ fragt nach dem Grund */
+function answerAssignment(ev, a, state, onDone, { who = null } = {}) {
+  if (state !== 'declined') return busy(null, async () => { onDone?.(await post(`/api/events/${ev.id}/assign/${a.id}/answer`, { state })); if (!who) toast(state === 'confirmed' ? 'Bestätigt – danke!' : 'Zurückgesetzt', 'ok'); });
+  const note = h('textarea', { class: 'input', rows: 2, maxlength: 300, placeholder: 'z. B. „krank“ oder „Termin verschoben“' });
+  const err = h('div', { class: 'form-error' });
+  modal({ title: who ? `${who}: ${a.slot} absagen` : `${a.slot} – geht doch nicht`,
+    body: h('div', null, h('p', { class: 'hint', style: { marginTop: 0 } }, 'Die Stelle wird wieder als offen angezeigt, damit die Planer jemand anderen einteilen können.'), field('Grund (optional, sehen die Planer)', note), err),
+    actions: [{ label: 'Abbrechen', class: 'ghost' }, { label: 'Absagen', class: 'red', onClick: async () => {
+      try { onDone?.(await post(`/api/events/${ev.id}/assign/${a.id}/answer`, { state: 'declined', note: note.value })); } catch (e) { err.textContent = e.message; return false; }
+    } }] });
+}
+/** Knöpfe „Passt“ / „Geht doch nicht“ für die eigenen, noch offenen Einteilungen */
+function confirmButtons(ev, onDone) {
+  const pending = (ev.my_assignments || []).filter((a) => a.state === 'pending');
+  if (!pending.length) return null;
+  return h('div', { class: 'confirm-row' }, pending.map((a) => h('div', { class: 'confirm-item' },
+    h('span', { class: 'confirm-txt' }, icon('help'), `Du bist als `, h('b', null, a.slot), ' eingeteilt'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn sm green', onclick: (e) => { e.preventDefault(); e.stopPropagation(); answerAssignment(ev, a, 'confirmed', onDone); } }, icon('check'), 'Passt'),
+      h('button', { class: 'btn sm', onclick: (e) => { e.preventDefault(); e.stopPropagation(); answerAssignment(ev, a, 'declined', onDone); } }, 'Geht doch nicht')))));
+}
+
 /* ------------------------------------------------------------ Terminkarte */
 function eventCard(ev, { onChange } = {}) {
   const today = daysUntil(ev.date) === 0;
@@ -123,14 +151,15 @@ function eventCard(ev, { onChange } = {}) {
         ev.meet_time ? h('span', null, icon('users'), `Treffen ${ev.meet_time}`) : null,
         ev.location ? h('span', null, icon('mapPin'), ev.location) : null),
       h('div', { class: 'chips' },
-        ev.my_slots.length ? h('span', { class: 'chip accent' }, icon('check'), 'Du: ' + ev.my_slots.join(', ')) : null,
+        ev.my_slots.length ? h('span', { class: 'chip ' + ((ev.my_assignments || []).some((a) => a.state === 'pending') ? 'orange' : 'accent') }, icon('check'), 'Du: ' + ev.my_slots.join(', ')) : null,
+        ev.can_plan_hint && ev.unconfirmed ? h('span', { class: 'chip' }, `${ev.unconfirmed} unbestätigt`) : null,
         fullTxt ? h('span', { class: 'chip ' + (ev.open ? 'amber' : 'green') }, fullTxt) : null,
         ev.open ? h('span', { class: 'chip' }, `${ev.open} offen`) : null,
         ev.rundown ? h('span', { class: 'chip' }, icon('list'), 'Rundown') : null,
         h('span', { class: 'counts', title: 'Vor Ort · Später · Online · Kann nicht' },
           Object.entries(RESP).map(([k, r]) => h('span', { class: 'c-' + k }, icon(r.icon), ev.counts[k] || 0))))),
     h('div', { class: 'ev-side' },
-      ev.respond_open ? respButtons(ev, { onDone: onChange }) : ev.my_response ? h('span', { class: 'chip ' + RESP[ev.my_response.status]?.chip }, respText(ev.my_response)) : null));
+      confirmButtons(ev, onChange) || (ev.respond_open ? respButtons(ev, { onDone: onChange }) : ev.my_response ? h('span', { class: 'chip ' + RESP[ev.my_response.status]?.chip }, respText(ev.my_response)) : null)));
 }
 
 function groupByMonth(events) {
@@ -139,7 +168,7 @@ function groupByMonth(events) {
   for (const e of events) {
     const m = fmtMonth(e.date);
     if (m !== cur) { out.push(h('div', { class: 'section-title' }, m)); cur = m; }
-    out.push(eventCard(e, { onChange: () => render() }));
+    out.push(eventCard({ ...e, can_plan_hint: planner() }, { onChange: () => render() }));
   }
   return out;
 }
@@ -202,7 +231,9 @@ async function minePage() {
   const list = h('div', { class: 'ev-list' }, h('div', { class: 'empty' }, 'Lädt …'));
   shell('/meine',
     h('div', { class: 'page-head' }, h('span', { class: 'label' }, 'TERMINPLANUNG'), h('h1', null, 'Meine Einsätze'),
-      h('p', { class: 'sub' }, 'Termine, für die du eingeteilt bist. Über „In Kalender“ landen sie in deinem Kalender.')),
+      h('p', { class: 'sub' }, 'Termine, für die du eingeteilt bist. Bitte bestätige neue Einteilungen mit „Passt“.')),
+    calendarCard(),
+    S.user.skills?.length ? h('p', { class: 'hint', style: { margin: '0 0 16px' } }, 'Deine Fähigkeiten laut Planern: ' + S.user.skills.join(', ')) : null,
     list);
   let data;
   try { data = await get('/api/events?scope=mine'); } catch (e) { return fill(list, h('div', { class: 'empty' }, e.message)); }
@@ -210,9 +241,29 @@ async function minePage() {
   fill(list, groupByMonth(data.events));
 }
 
+/** Kalender-Abo: persönlicher Link, den Handy-/Outlook-Kalender regelmäßig abrufen */
+function calendarCard() {
+  const box = h('div', { class: 'card card-pad cal-card' });
+  const paint = (c) => fill(box,
+    h('div', { class: 'card-head' }, h('span', { class: 'mod-ico' }, icon('calendarCheck')), h('div', null, h('h3', null, 'Kalender-Abo'),
+      h('small', { class: 'hint' }, 'Alle deine Einsätze automatisch im Handy- oder Outlook-Kalender – Änderungen kommen von selbst nach.'))),
+    h('div', { class: 'copy-field' }, h('input', { class: 'input mono', value: c.url, readonly: true, onclick: (e) => e.target.select() }),
+      h('button', { class: 'btn', onclick: () => copyText(c.url) }, icon('copy'), 'Kopieren')),
+    h('div', { class: 'row', style: { marginTop: '10px' } },
+      h('a', { class: 'btn primary', href: c.webcal }, icon('calendar'), 'Im Kalender abonnieren'),
+      h('button', { class: 'btn ghost', onclick: async () => {
+        if (!(await confirmDialog('Der bisherige Link funktioniert danach nicht mehr – auch nicht in Kalendern, in denen du ihn schon eingetragen hast.', { title: 'Neuen Link erzeugen?', okLabel: 'Neuer Link', danger: false }))) return;
+        busy(null, async () => { paint(await post('/api/me/calendar/reset')); toast('Neuer Link erzeugt', 'ok'); });
+      } }, icon('rotate'), 'Neuer Link')),
+    h('small', { class: 'hint', style: { display: 'block', marginTop: '10px' } }, 'iPhone: „Im Kalender abonnieren“ antippen. Google Kalender: Link kopieren → Weitere Kalender → Per URL. Outlook: Kalender hinzufügen → Aus dem Internet. Den Link nicht weitergeben – wer ihn hat, sieht deine Einsätze.'));
+  get('/api/me/calendar').then(paint).catch((e) => fill(box, h('div', { class: 'form-error' }, e.message)));
+  return box;
+}
+
 /* ------------------------------------------------------------ Seite: Termin */
 async function eventPage(id) {
   let ev;
+  if (planner()) await positions().catch(() => null); // für „kann …“ in der Personen-Auswahl
   try { ev = await get(`/api/events/${id}`); }
   catch (e) {
     return shell('/termin', h('a', { class: 'back', href: '#/' }, icon('arrowLeft'), 'Alle Termine'), h('div', { class: 'empty' }, h('b', null, 'Nicht gefunden'), e.message));
@@ -255,7 +306,8 @@ async function eventPage(id) {
           h('span', { class: 'label', style: { color: 'var(--accent-2)', fontWeight: 600, letterSpacing: '.14em', fontSize: '12px' } }, fmtLong(ev.date).toUpperCase()),
           h('h1', null, ev.title),
           h('div', { class: 'chips' }, statusChip(ev.status), ev.my_slots.length ? h('span', { class: 'chip accent' }, icon('check'), 'Du: ' + ev.my_slots.join(', ')) : null,
-            ev.needed ? h('span', { class: 'chip ' + (ev.open ? 'amber' : 'green') }, ev.open ? `${ev.open} von ${ev.needed} Stellen offen` : 'Voll besetzt') : null)),
+            ev.needed ? h('span', { class: 'chip ' + (ev.open ? 'amber' : 'green') }, ev.open ? `${ev.open} von ${ev.needed} Stellen offen` : 'Voll besetzt') : null,
+            p && ev.unconfirmed ? h('span', { class: 'chip orange' }, icon('help'), `${ev.unconfirmed} noch nicht bestätigt`) : null)),
         acts),
       ev.status === 'cancelled' ? h('div', { class: 'notice red', style: { marginBottom: '16px' } }, icon('ban'), 'Dieser Termin wurde abgesagt.') : null,
       ev.status === 'draft' ? h('div', { class: 'notice', style: { marginBottom: '16px' } }, icon('lock'), 'Entwurf – nur Planer sehen diesen Termin. Mit „Freigeben“ können sich alle eintragen.') : null,
@@ -266,6 +318,17 @@ async function eventPage(id) {
 function myCard(ev, repaint) {
   const mine = ev.responses.find((r) => r.sub === S.user.sub);
   const body = h('div', { class: 'stack' });
+  // Eigene Einteilungen mit Bestätigung
+  for (const a of ev.my_assignments || []) {
+    if (a.state === 'pending') continue; // Knöpfe siehe unten
+    body.append(h('div', { class: 'notice ' + (a.state === 'confirmed' ? 'ok' : 'red') }, icon(a.state === 'confirmed' ? 'checkCircle' : 'x'),
+      h('span', { style: { flex: 1 } }, a.state === 'confirmed' ? ['Du bist als ', h('b', null, a.slot), ' eingeteilt und hast bestätigt.'] : ['Du hast ', h('b', null, a.slot), ' abgesagt', a.note ? ` („${a.note}“)` : '', '.']),
+      a.state === 'confirmed'
+        ? h('button', { class: 'linkish', onclick: () => answerAssignment(ev, a, 'declined', repaint) }, 'Geht doch nicht?')
+        : h('button', { class: 'linkish', onclick: () => answerAssignment(ev, a, 'confirmed', repaint) }, 'Doch dabei')));
+  }
+  const cb = confirmButtons(ev, repaint);
+  if (cb) body.append(cb);
   const canEdit = ev.respond_open || ev.can_plan;
   if (canEdit) body.append(respButtons({ ...ev, my_response: mine || null }, { big: true, onDone: repaint }));
   else body.append(h('div', { class: 'notice' + (mine ? '' : ' warn') }, icon('info'),
@@ -313,6 +376,7 @@ function slotsCard(ev, repaint) {
   const p = ev.can_plan;
   const respOf = new Map(ev.responses.map((r) => [r.sub, r]));
   const head = h('div', { class: 'card-head' }, h('h3', null, 'Besetzung'), h('div', { class: 'spacer' }),
+    ev.slots.some((s) => s.assigned.length) ? h('span', { class: 'asg-legend' }, h('span', { class: 'st-confirmed' }, icon('check'), 'bestätigt'), h('span', { class: 'st-pending' }, icon('help'), 'offen'), h('span', { class: 'st-declined' }, icon('x'), 'abgesagt')) : null,
     p ? h('button', { class: 'btn sm', onclick: () => slotsDialog(ev, repaint) }, icon('edit'), 'Stellen') : null);
   if (!ev.slots.length) {
     return h('div', { class: 'card card-pad' }, head, h('div', { class: 'resp-empty' }, p ? 'Noch keine Stellen. Lege fest, wer gebraucht wird (z. B. Regie, 2× Kamera, Ton).' : 'Für diesen Termin sind noch keine Stellen festgelegt.'),
@@ -321,9 +385,20 @@ function slotsCard(ev, repaint) {
   const rows = ev.slots.map((s) => {
     const people = s.assigned.map((a) => {
       const r = respOf.get(a.sub);
-      const warn = r?.status === 'no';
-      return h('span', { class: 'pill' + (a.sub === S.user.sub ? ' mine' : '') + (warn ? ' warn' : '') + (a.active ? '' : ' off'), title: warn ? `${a.name} hat abgesagt` : r ? `${a.name}: ${respText(r)}` : a.active ? a.email : `${a.name} hat keinen Zugriff mehr` },
+      const warn = r?.status === 'no' && a.state !== 'declined';
+      const stateTxt = a.state === 'confirmed' ? 'hat bestätigt' : a.state === 'declined' ? `hat abgesagt${a.note ? ` („${a.note}“)` : ''}` : 'noch nicht bestätigt';
+      return h('span', { class: `pill st-${a.state}` + (p ? ' clickable' : '') + (a.sub === S.user.sub ? ' mine' : '') + (warn ? ' warn' : '') + (a.active ? '' : ' off'), tabindex: p ? '0' : null, role: p ? 'button' : null,
+        title: `${a.name}: ${stateTxt}${r ? ' · ' + respText(r) : ''}${a.active ? '' : ' · kein Zugriff mehr'}`,
+        onclick: p ? (e) => { if (e.target.closest('.x')) return; menu(e.currentTarget, [
+          { section: `${a.name} · ${s.name}` },
+          a.state !== 'confirmed' ? { label: 'Als bestätigt markieren', icon: 'check', onClick: () => answerAssignment(ev, { ...a, slot: s.name }, 'confirmed', repaint, { who: a.name }) } : null,
+          a.state !== 'declined' ? { label: 'Als abgesagt markieren', icon: 'x', onClick: () => answerAssignment(ev, { ...a, slot: s.name }, 'declined', repaint, { who: a.name }) } : null,
+          a.state !== 'pending' ? { label: 'Bestätigung zurücksetzen', icon: 'rotate', onClick: () => answerAssignment(ev, { ...a, slot: s.name }, 'pending', repaint, { who: a.name }) } : null,
+          { sep: true },
+          { label: 'Aus der Stelle entfernen', icon: 'trash', onClick: () => busy(null, async () => repaint(await del(`/api/events/${ev.id}/assign/${a.id}`))) },
+        ]); } : null },
         avatar(a, r?.status || 'none'), h('span', { class: 'nm' }, a.name),
+        h('span', { class: 'st-ico' }, icon(ASG[a.state]?.icon || 'help')),
         r?.status === 'later' && r.from_time ? h('small', { class: 'pt later' }, `ab ${r.from_time}`) : r?.status === 'online' ? h('small', { class: 'pt online' }, 'online') : null,
         p ? h('button', { class: 'x', title: 'Entfernen', 'aria-label': `${a.name} entfernen`, onclick: (e) => busy(e.currentTarget, async () => repaint(await del(`/api/events/${ev.id}/assign/${a.id}`))) }, icon('x')) : null);
     });
@@ -331,17 +406,20 @@ function slotsCard(ev, repaint) {
       ? h('button', { class: 'pill open', onclick: (e) => pickPerson(e.currentTarget, ev, s, repaint) }, icon('plus'), i === 0 ? 'Einteilen' : 'Offen')
       : h('span', { class: 'pill open' }, 'Offen')));
     return h('div', { class: 'slot' },
-      h('div', { class: 'slot-name' }, h('b', null, s.name), h('small', { class: s.open ? 'miss' : 'full' }, `${s.assigned.length}/${s.needed}`)),
+      h('div', { class: 'slot-name' }, h('b', null, s.name), h('small', { class: s.open ? 'miss' : 'full' }, `${s.filled}/${s.needed}`)),
       h('div', { class: 'slot-people' }, people, open));
   });
   return h('div', { class: 'card card-pad' }, head, h('div', { class: 'slots' }, rows));
 }
 
 function pickPerson(anchor, ev, slot, repaint) {
-  const taken = new Set(slot.assigned.map((a) => a.sub));
+  const taken = new Set(slot.assigned.filter((a) => a.state !== 'declined').map((a) => a.sub)); // nach Absage erneut einteilbar
   const otherSlots = new Map();
   for (const s of ev.slots) for (const a of s.assigned) if (s.id !== slot.id) otherSlots.set(a.sub, [...(otherSlots.get(a.sub) || []), s.name]);
   const respOf = new Map(ev.responses.map((r) => [r.sub, r]));
+  // Fähigkeit passend zur Stelle (über die Stellen-Liste, bei frei benannten Stellen über den Namen)
+  const posId = slot.position_id || (S.positions || []).find((x) => x.name.toLowerCase() === slot.name.toLowerCase())?.id;
+  const skilled = (x) => !!posId && (x.skills || []).includes(posId);
   const search = input({ placeholder: 'Name suchen …', type: 'search' });
   const list = h('div', { class: 'picker-list' });
   const order = [['yes', 'Vor Ort'], ['later', 'Später'], ['online', 'Online'], [null, 'Keine Rückmeldung'], ['no', 'Kann nicht']];
@@ -350,7 +428,7 @@ function pickPerson(anchor, ev, slot, repaint) {
     const people = (ev.people || []).filter((x) => !taken.has(x.sub) && (!q || x.name.toLowerCase().includes(q) || x.email.toLowerCase().includes(q)));
     const groups = order.map(([st, label]) => {
       const items = people.filter((x) => (x.response || null) === st)
-        .sort((a, b) => Number(!!respOf.get(b.sub)?.wishes?.includes(slot.id)) - Number(!!respOf.get(a.sub)?.wishes?.includes(slot.id)) || a.name.localeCompare(b.name, 'de'));
+        .sort((a, b) => Number(skilled(b)) - Number(skilled(a)) || Number(!!respOf.get(b.sub)?.wishes?.includes(slot.id)) - Number(!!respOf.get(a.sub)?.wishes?.includes(slot.id)) || a.name.localeCompare(b.name, 'de'));
       if (!items.length) return null;
       return [h('div', { class: 'picker-sec' }, `${label} · ${items.length}`), items.map((x) => {
         const r = respOf.get(x.sub);
@@ -361,7 +439,9 @@ function pickPerson(anchor, ev, slot, repaint) {
           closePop();
           await busy(null, async () => repaint(await post(`/api/events/${ev.id}/assign`, { slot_id: slot.id, sub: x.sub })));
         } }, avatar(x, st || 'none'), h('span', { class: 't' }, h('b', null, x.name), sub ? h('small', null, sub) : null),
-        wish ? h('span', { class: 'wish', title: `Wunsch: ${slot.name}` }, icon('star')) : h('span'));
+        h('span', { class: 'pick-marks' },
+          skilled(x) ? h('span', { class: 'skill', title: `Kann ${slot.name}` }, icon('check'), slot.name) : null,
+          wish ? h('span', { class: 'wish', title: `Wunsch: ${slot.name}` }, icon('star')) : null));
       })];
     }).filter(Boolean);
     fill(list, groups.length ? groups : h('div', { class: 'resp-empty', style: { padding: '10px' } }, q ? 'Niemand gefunden.' : 'Alle sind schon eingeteilt.'));
@@ -554,6 +634,19 @@ async function adminPage(tab) {
   let data;
   try { data = await get('/api/people'); } catch (e) { return fill(box, h('div', { class: 'empty' }, e.message)); }
   const st = data.sync.status;
+  S.positions = null;
+  const posList = await positions().catch(() => []);
+  const posName = new Map(posList.map((x) => [x.id, x.name]));
+  const skillsDialog = (p) => {
+    const sel = new Set(p.skills || []);
+    const chips = h('div', { class: 'wish-chips' });
+    const paint = () => fill(chips, posList.filter((x) => x.active || sel.has(x.id)).map((x) => h('button', { type: 'button', class: sel.has(x.id) ? 'sel skill' : '', onclick: () => { if (sel.has(x.id)) sel.delete(x.id); else sel.add(x.id); paint(); } }, sel.has(x.id) ? icon('check') : null, x.name)));
+    paint();
+    modal({ title: `Fähigkeiten: ${p.name}`, body: h('div', null, h('p', { class: 'hint', style: { marginTop: 0 } }, 'Was kann die Person? Beim Einteilen stehen Passende dann ganz oben.'), chips),
+      actions: [{ label: 'Abbrechen', class: 'ghost' }, { label: 'Speichern', class: 'primary', onClick: async () => {
+        try { await put(`/api/people/${encodeURIComponent(p.sub)}/skills`, { position_ids: [...sel] }); adminPage('personen'); } catch (e) { toast(e.message, 'err'); return false; }
+      } }] });
+  };
   const syncBtn = h('button', { class: 'btn', onclick: (e) => busy(e.currentTarget, async () => { const r = await post('/api/people/sync'); toast(`${r.count} Personen abgeglichen`, 'ok'); adminPage('personen'); }) }, icon('refresh'), 'Jetzt abgleichen');
   fill(box,
     h('div', { class: 'u-tools' },
@@ -570,8 +663,11 @@ async function adminPage(tab) {
         p.kind === 'guest' ? h('span', { class: 'chip amber' }, 'Gast') : null,
         p.has_rundown ? h('span', { class: 'chip' }, icon('list'), 'Rundown') : null,
         p.active ? null : h('span', { class: 'chip red' }, 'Kein Zugriff mehr'),
-        p.last_seen ? null : h('span', { class: 'chip' }, 'noch nie geöffnet'))),
-      h('div', { class: 'u-actions' })))),
+        p.last_seen ? null : h('span', { class: 'chip' }, 'noch nie geöffnet')),
+        h('div', { class: 'chips skills' }, (p.skills || []).length
+          ? p.skills.map((id) => posName.get(id)).filter(Boolean).map((n) => h('span', { class: 'chip skill' }, icon('check'), n))
+          : h('span', { class: 'hint' }, 'Keine Fähigkeiten hinterlegt'))),
+      h('div', { class: 'u-actions' }, h('button', { class: 'btn sm', onclick: () => skillsDialog(p) }, icon('edit'), 'Fähigkeiten'))))),
     h('p', { class: 'hint', style: { marginTop: '16px' } }, 'Rollen vergibt ein Admin im Portal unter Benutzer → Module → Terminplanung.'));
 }
 

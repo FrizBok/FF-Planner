@@ -246,3 +246,48 @@ button.resp-person:hover { background: var(--surface-2); }
 /* „Portal“ – in allen Modulen gleich: erster Menüpunkt, Kachel-Icon, Trennstrich zu den eigenen Bereichen */
 .nav a.nav-portal { position: relative; margin-right: 7px; }
 .nav a.nav-portal::after { content: ''; position: absolute; right: -5px; top: 7px; bottom: 7px; width: 1px; background: var(--border-2); }
+
+/* ---------- Einteilung bestätigen */
+.confirm-row { display: grid; gap: 8px; }
+.confirm-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border-radius: 10px; border: 1px dashed color-mix(in srgb, var(--orange) 60%, transparent); background: color-mix(in srgb, var(--orange) 8%, transparent); }
+.confirm-txt { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--text-2); }
+.confirm-txt b { color: var(--text); margin: 0 3px; }
+.confirm-txt .ico { width: 15px; height: 15px; color: var(--st-later); }
+.ev-side .confirm-row { justify-items: end; }
+.notice.ok { background: color-mix(in srgb, var(--green) 12%, transparent); color: var(--green-text); }
+.notice b { color: inherit; }
+.linkish { border: 0; background: transparent; color: inherit; text-decoration: underline; text-underline-offset: 3px; font-size: 13px; padding: 0; white-space: nowrap; opacity: .85; }
+.linkish:hover { opacity: 1; }
+.pill .st-ico { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; }
+.pill .st-ico .ico { width: 11px; height: 11px; }
+.pill.st-confirmed .st-ico { background: color-mix(in srgb, var(--green) 25%, transparent); color: var(--green-text); }
+.pill.st-pending { border-style: dashed; }
+.pill.st-pending .st-ico { background: color-mix(in srgb, var(--orange) 22%, transparent); color: var(--st-later); }
+.pill.st-declined { opacity: .6; border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+.pill.st-declined .nm { text-decoration: line-through; }
+.pill.st-declined .st-ico { background: color-mix(in srgb, var(--red) 22%, transparent); color: var(--red-text); }
+.pill.clickable { cursor: pointer; }
+.pill.clickable:hover { border-color: var(--accent); }
+.asg-legend { display: inline-flex; gap: 10px; font-size: 11.5px; color: var(--muted); margin-right: 6px; }
+.asg-legend span { display: inline-flex; align-items: center; gap: 3px; }
+.asg-legend .ico { width: 12px; height: 12px; }
+.asg-legend .st-confirmed .ico { color: var(--green-text); }
+.asg-legend .st-pending .ico { color: var(--st-later); }
+.asg-legend .st-declined .ico { color: var(--red-text); }
+@media (max-width: 760px) { .asg-legend { display: none; } }
+
+/* ---------- Fähigkeiten */
+.pick-marks { display: inline-flex; align-items: center; gap: 6px; }
+.picker-item .skill { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px; border-radius: 99px; font-size: 11px; font-weight: 700; background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent-2); }
+.picker-item .skill .ico { width: 11px; height: 11px; }
+.chip.skill { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent-2); }
+.chips.skills { margin-top: 6px; }
+.wish-chips button.sel.skill { border-color: var(--accent); color: var(--accent-2); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+/* ---------- Kalender-Abo */
+.cal-card { margin-bottom: 18px; }
+.cal-card .card-head { align-items: flex-start; }
+.cal-card .mod-ico { width: 40px; height: 40px; border-radius: 12px; flex: none; }
+.cal-card .copy-field { display: flex; gap: 8px; }
+.cal-card .copy-field .input { flex: 1; min-width: 0; font-size: 12.5px; }
+@media (max-width: 600px) { .cal-card .copy-field { flex-direction: column; } }

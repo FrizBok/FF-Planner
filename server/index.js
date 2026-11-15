@@ -103,6 +103,7 @@ const needAdmin = (req) => { needAuth(req); if (!isAdmin(req.user)) fail(403, 'D
 const meOut = (u) => ({
   sub: u.sub, email: u.email, name: u.name, role: u.role, kind: u.kind, platform_admin: !!u.platform_admin,
   can_plan: isPlanner(u), is_admin: isAdmin(u), has_rundown: hasRundown(u),
+  skills: db.prepare('SELECT p.name FROM people_skills k JOIN positions p ON p.id=k.position_id WHERE k.sub=? ORDER BY p.sort').all(u.sub).map((r) => r.name),
 });
 const personOut = (p) => p ? { sub: p.sub, name: p.name || p.email.split('@')[0], email: p.email, kind: p.kind, active: !!p.active } : null;
 const personBySub = (sub) => db.prepare('SELECT * FROM people WHERE sub=?').get(String(sub));
@@ -209,8 +210,9 @@ function slotsOf(eventId) {
   const slots = db.prepare('SELECT * FROM slots WHERE event_id=? ORDER BY sort, id').all(eventId);
   const asg = db.prepare('SELECT a.*, p.name, p.email, p.kind, p.active FROM assignments a LEFT JOIN people p ON p.sub=a.sub WHERE a.event_id=? ORDER BY a.id').all(eventId);
   return slots.map((s) => {
-    const people = asg.filter((a) => a.slot_id === s.id).map((a) => ({ id: a.id, ...personOut({ sub: a.sub, name: a.name, email: a.email || '?', kind: a.kind, active: a.active ?? 0 }) }));
-    return { id: s.id, name: s.name, position_id: s.position_id, needed: s.needed, assigned: people, open: Math.max(0, s.needed - people.length) };
+    const people = asg.filter((a) => a.slot_id === s.id).map((a) => ({ id: a.id, state: a.state, note: a.note, ...personOut({ sub: a.sub, name: a.name, email: a.email || '?', kind: a.kind, active: a.active ?? 0 }) }));
+    const counting = people.filter((a) => a.state !== 'declined').length; // „Geht doch nicht“ macht die Stelle wieder frei
+    return { id: s.id, name: s.name, position_id: s.position_id, needed: s.needed, assigned: people, filled: counting, open: Math.max(0, s.needed - counting) };
   });
 }
 
@@ -227,11 +229,13 @@ function summary(e, u) {
   return {
     id: e.id, title: e.title, date: e.date, start_time: e.start_time, end_time: e.end_time, meet_time: e.meet_time, location: e.location,
     status: e.status, respond_until: e.respond_until, respond_open: respondOpen(e),
-    counts, needed: slots.reduce((n, s) => n + s.needed, 0), filled: slots.reduce((n, s) => n + Math.min(s.needed, s.assigned.length), 0),
+    counts, needed: slots.reduce((n, s) => n + s.needed, 0), filled: slots.reduce((n, s) => n + Math.min(s.needed, s.filled), 0),
     open: slots.reduce((n, s) => n + s.open, 0),
     open_slots: slots.filter((s) => s.open > 0).map((s) => ({ id: s.id, name: s.name, open: s.open })),
     my_response: mine ? { status: mine.status, from_time: mine.from_time || '', comment: mine.comment, wishes: json(mine.wishes, []) } : null,
-    my_slots: slots.filter((s) => s.assigned.some((a) => a.sub === u.sub)).map((s) => s.name),
+    my_slots: slots.filter((s) => s.assigned.some((a) => a.sub === u.sub && a.state !== 'declined')).map((s) => s.name),
+    my_assignments: slots.flatMap((s) => s.assigned.filter((a) => a.sub === u.sub).map((a) => ({ id: a.id, slot: s.name, state: a.state, note: a.note }))),
+    unconfirmed: slots.reduce((n, s) => n + s.assigned.filter((a) => a.state === 'pending').length, 0),
     rundown: rundownOut(e, u),
   };
 }
@@ -317,7 +321,7 @@ function detail(e, u) {
     // Alle aktiven Personen mit Zugriff (für die Einteilung, Gäste eingeschlossen)
     const resp = new Map(responses.map((r) => [r.sub, r]));
     out.people = db.prepare('SELECT * FROM people WHERE active=1 ORDER BY lower(name), lower(email)').all()
-      .map((p) => ({ ...personOut(p), response: resp.get(p.sub)?.status || null }));
+      .map((p) => ({ ...personOut(p), response: resp.get(p.sub)?.status || null, skills: skillsOf(p.sub) }));
     out.no_answer = out.people.filter((p) => !p.response && p.kind !== 'guest').map((p) => ({ sub: p.sub, name: p.name }));
     out.log = db.prepare('SELECT l.*, p.name, p.email FROM event_log l LEFT JOIN people p ON p.sub=l.actor WHERE l.event_id=? ORDER BY l.id DESC LIMIT 50').all(e.id)
       .map((l) => ({ at: l.at, action: l.action, detail: l.detail, by: l.name || l.email || null }));
@@ -400,10 +404,12 @@ POST('/api/events/:id/assign', needPlanner, (req) => {
   if (!slot) fail(404, 'Stelle nicht gefunden');
   const p = personBySub(req.body.sub);
   if (!p || !p.active) fail(404, 'Person nicht gefunden oder ohne Zugriff');
-  if (db.prepare('SELECT 1 FROM assignments WHERE slot_id=? AND sub=?').get(slot.id, p.sub)) fail(400, `${p.name || p.email} ist schon als ${slot.name} eingeteilt`);
-  const n = db.prepare('SELECT COUNT(*) AS n FROM assignments WHERE slot_id=?').get(slot.id).n;
+  const ex = db.prepare('SELECT * FROM assignments WHERE slot_id=? AND sub=?').get(slot.id, p.sub);
+  if (ex && ex.state !== 'declined') fail(400, `${p.name || p.email} ist schon als ${slot.name} eingeteilt`);
+  const n = db.prepare("SELECT COUNT(*) AS n FROM assignments WHERE slot_id=? AND state<>'declined'").get(slot.id).n;
   if (n >= slot.needed) fail(400, `${slot.name} ist schon voll besetzt – erst die Anzahl erhöhen`);
-  db.prepare('INSERT INTO assignments (event_id, slot_id, sub, created_by) VALUES (?,?,?,?)').run(e.id, slot.id, p.sub, req.user.sub);
+  if (ex) db.prepare("UPDATE assignments SET state='pending', note='', answered_at=NULL, created_by=? WHERE id=?").run(req.user.sub, ex.id); // nach Absage erneut einteilen
+  else db.prepare('INSERT INTO assignments (event_id, slot_id, sub, created_by) VALUES (?,?,?,?)').run(e.id, slot.id, p.sub, req.user.sub);
   logEvent(e.id, req.user, 'assigned', `${p.name || p.email} → ${slot.name}`);
   return detail(getEvent(e.id), req.user);
 });
@@ -413,6 +419,28 @@ DELETE('/api/events/:id/assign/:aid', needPlanner, (req) => {
   if (!a) fail(404, 'Einteilung nicht gefunden');
   db.prepare('DELETE FROM assignments WHERE id=?').run(a.id);
   logEvent(e.id, req.user, 'unassigned', `${a.name || a.email || a.sub} ✕ ${a.slot}`);
+  return detail(getEvent(e.id), req.user);
+});
+
+/* ---------- Einteilung bestätigen: „Passt“ oder „Geht doch nicht“ (eingeteilte Person, Planer auch für andere) */
+POST('/api/events/:id/assign/:aid/answer', needAuth, seeEvent, (req) => {
+  const e = req.event;
+  const a = db.prepare('SELECT a.*, s.name AS slot, p.name, p.email FROM assignments a JOIN slots s ON s.id=a.slot_id LEFT JOIN people p ON p.sub=a.sub WHERE a.id=? AND a.event_id=?').get(Number(req.params.aid), e.id);
+  if (!a) fail(404, 'Einteilung nicht gefunden');
+  if (a.sub !== req.user.sub && !isPlanner(req.user)) fail(403, 'Das kann nur die eingeteilte Person');
+  const state = req.body.state;
+  if (!['confirmed', 'declined', 'pending'].includes(state)) fail(400, 'Ungültige Antwort');
+  if (state === 'pending' && !isPlanner(req.user)) fail(403, 'Zurücksetzen können nur Planer');
+  if (a.state === 'declined' && state !== 'declined') {
+    const slot = db.prepare('SELECT * FROM slots WHERE id=?').get(a.slot_id);
+    const n = db.prepare("SELECT COUNT(*) AS n FROM assignments WHERE slot_id=? AND state<>'declined'").get(a.slot_id).n;
+    if (n >= slot.needed) fail(400, `${slot.name} ist inzwischen anders besetzt – bitte mit den Planern absprechen`);
+  }
+  const note = state === 'declined' ? str(req.body.note, 300) : '';
+  db.prepare(`UPDATE assignments SET state=?, note=?, answered_at=${state === 'pending' ? 'NULL' : "datetime('now')"} WHERE id=?`).run(state, note, a.id);
+  const who = a.name || a.email || a.sub;
+  const TXT = { confirmed: 'bestätigt', declined: 'abgesagt', pending: 'zurückgesetzt' };
+  logEvent(e.id, req.user, 'answer', `${who} · ${a.slot}: ${TXT[state]}${note ? ` („${note}“)` : ''}${a.sub !== req.user.sub ? ' (von Planer)' : ''}`);
   return detail(getEvent(e.id), req.user);
 });
 
@@ -448,25 +476,83 @@ async function rdCall(fn) {
 }
 
 /* ---------- Kalender-Datei (.ics) */
+const icsEsc = (v) => String(v || '').replace(/[\\;,]/g, (c) => '\\' + c).replace(/\r?\n/g, '\\n');
+const icsDt = (d, t) => d.replace(/-/g, '') + (t ? 'T' + t.replace(':', '') + '00' : '');
+/** Ein Termin als VEVENT; slots = eigene Stellen (für Titel und Beschreibung) */
+function vevent(e, slots, host, link) {
+  const start = e.meet_time || e.start_time;
+  return ['BEGIN:VEVENT',
+    `UID:planner-${e.id}@${host || 'ff-planner'}`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`,
+    start ? `DTSTART;TZID=Europe/Berlin:${icsDt(e.date, start)}` : `DTSTART;VALUE=DATE:${icsDt(e.date)}`,
+    start && e.end_time ? `DTEND;TZID=Europe/Berlin:${icsDt(e.end_time < start ? nextDay(e.date) : e.date, e.end_time)}` : (!start ? `DTEND;VALUE=DATE:${icsDt(nextDay(e.date))}` : null),
+    `SUMMARY:${icsEsc((e.status === 'cancelled' ? 'ABGESAGT: ' : '') + e.title + (slots.length ? ` (${slots.join(', ')})` : ''))}`,
+    e.location ? `LOCATION:${icsEsc(e.location)}` : null,
+    `DESCRIPTION:${icsEsc([e.meet_time ? `Treffen: ${e.meet_time}` : '', e.start_time ? `Beginn: ${e.start_time}` : '', slots.length ? `Deine Stelle: ${slots.join(', ')}` : '', e.description, link || ''].filter(Boolean).join('\n'))}`,
+    link ? `URL:${link}` : null,
+    e.status === 'cancelled' ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
+    'END:VEVENT'].filter(Boolean);
+}
+const VCAL_HEAD = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//FrankenFinals Broadcast//Terminplanung//DE', 'CALSCALE:GREGORIAN'];
+const mySlotNames = (eventId, sub) => slotsOf(eventId).filter((s) => s.assigned.some((a) => a.sub === sub && a.state !== 'declined')).map((s) => s.name);
+
 GET('/api/events/:id/ics', needAuth, seeEvent, (req, res) => {
   const e = req.event;
-  const dt = (d, t) => d.replace(/-/g, '') + (t ? 'T' + t.replace(':', '') + '00' : '');
-  const icsEsc = (v) => String(v || '').replace(/[\\;,]/g, (c) => '\\' + c).replace(/\r?\n/g, '\\n');
-  const mine = slotsOf(e.id).filter((s) => s.assigned.some((a) => a.sub === req.user.sub)).map((s) => s.name);
-  const end = e.end_time;
-  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//FrankenFinals Broadcast//Terminplanung//DE', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT',
-    `UID:planner-${e.id}@${reqHost(req) || 'ff-planner'}`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`,
-    e.start_time ? `DTSTART;TZID=Europe/Berlin:${dt(e.date, e.meet_time || e.start_time)}` : `DTSTART;VALUE=DATE:${dt(e.date)}`,
-    e.start_time && end ? `DTEND;TZID=Europe/Berlin:${dt(e.end_time < (e.meet_time || e.start_time) ? nextDay(e.date) : e.date, end)}` : null,
-    `SUMMARY:${icsEsc(e.title + (mine.length ? ` (${mine.join(', ')})` : ''))}`,
-    e.location ? `LOCATION:${icsEsc(e.location)}` : null,
-    `DESCRIPTION:${icsEsc([e.meet_time ? `Treffen: ${e.meet_time}` : '', e.start_time ? `Beginn: ${e.start_time}` : '', mine.length ? `Deine Stelle: ${mine.join(', ')}` : '', e.description].filter(Boolean).join('\n'))}`,
-    e.status === 'cancelled' ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
-    'END:VEVENT', 'END:VCALENDAR'].filter(Boolean);
+  const lines = [...VCAL_HEAD, ...vevent(e, mySlotNames(e.id, req.user.sub), reqHost(req)), 'END:VCALENDAR'];
   res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': `attachment; filename="termin-${e.id}.ics"`, 'Cache-Control': 'no-store', ...SEC_HEADERS });
   res.end(lines.join('\r\n') + '\r\n');
   return HANDLED;
 });
+
+/* ---------- Kalender-Abo: persönlicher, geheimer Link mit allen eigenen Einsätzen (für Handy-/Outlook-Kalender) */
+const appBase = (req) => portal.normalizeBaseUrl(process.env.APP_URL) || `${isSecure(req) ? 'https' : 'http'}://${reqHost(req)}`;
+function calInfo(req, p) {
+  const url = `${appBase(req)}/cal/${p.cal_token}.ics`;
+  return { url, webcal: url.replace(/^https?:/, 'webcal:') };
+}
+GET('/api/me/calendar', needAuth, (req) => {
+  let p = personBySub(req.user.sub);
+  if (!p.cal_token) { db.prepare('UPDATE people SET cal_token=? WHERE sub=?').run(randomToken(24), p.sub); p = personBySub(p.sub); }
+  return calInfo(req, p);
+});
+POST('/api/me/calendar/reset', needAuth, (req) => {
+  db.prepare('UPDATE people SET cal_token=? WHERE sub=?').run(randomToken(24), req.user.sub);
+  return calInfo(req, personBySub(req.user.sub));
+});
+function calendarFeed(req, res, token) {
+  const p = /^[A-Za-z0-9_-]{20,}$/.test(token) ? db.prepare('SELECT * FROM people WHERE cal_token=? AND active=1').get(token) : null;
+  if (!p) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', ...SEC_HEADERS }); return res.end('Kalender nicht gefunden'); }
+  const from = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+  const events = db.prepare(`SELECT DISTINCT e.* FROM events e JOIN assignments a ON a.event_id=e.id
+    WHERE a.sub=? AND a.state<>'declined' AND e.status<>'draft' AND e.date>=? ORDER BY e.date`).all(p.sub, from);
+  const base = appBase(req);
+  const lines = [...VCAL_HEAD, `X-WR-CALNAME:${icsEsc('FrankenFinals – ' + (p.name || 'Meine Einsätze'))}`, 'X-WR-TIMEZONE:Europe/Berlin',
+    'REFRESH-INTERVAL;VALUE=DURATION:PT1H', 'X-PUBLISHED-TTL:PT1H',
+    ...events.flatMap((e) => vevent(e, mySlotNames(e.id, p.sub), reqHost(req), `${base}/#/termin/${e.id}`)), 'END:VCALENDAR'];
+  res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-store', ...SEC_HEADERS });
+  res.end(lines.join('\r\n') + '\r\n');
+}
+
+/* ---------- Für die Startseite des Portals: „Deine nächsten Einsätze“ (Dienst-zu-Dienst, mit dem Portal-Schlüssel unterschrieben) */
+GET('/api/ext/upcoming', (req) => {
+  const sub = String(req.query.sub || '');
+  if (!portal.verifyUpcoming(req.headers.authorization, sub)) fail(401, 'Ungültige oder fehlende Unterschrift');
+  const p = db.prepare('SELECT * FROM people WHERE sub=? AND active=1').get(sub);
+  if (!p) return { items: [], to_answer: 0 };
+  const d = today();
+  const rows = db.prepare(`SELECT e.*, a.id AS aid, a.state, s.name AS slot FROM assignments a JOIN events e ON e.id=a.event_id JOIN slots s ON s.id=a.slot_id
+    WHERE a.sub=? AND a.state<>'declined' AND e.status IN ('open','closed') AND e.date>=? ORDER BY e.date, e.start_time, s.sort LIMIT 20`).all(sub, d);
+  const byEvent = new Map();
+  for (const r of rows) {
+    if (!byEvent.has(r.id)) byEvent.set(r.id, { id: r.id, title: r.title, date: r.date, start_time: r.start_time, meet_time: r.meet_time, location: r.location, slots: [], pending: false, path: `/#/termin/${r.id}` });
+    const x = byEvent.get(r.id);
+    x.slots.push(r.slot);
+    if (r.state === 'pending') x.pending = true;
+  }
+  const open = db.prepare("SELECT * FROM events WHERE status='open' AND date>=?").all(d)
+    .filter((e) => canSee(p, e) && respondOpen(e) && !db.prepare('SELECT 1 FROM responses WHERE event_id=? AND sub=?').get(e.id, sub));
+  return { items: [...byEvent.values()].slice(0, 5), to_answer: open.length };
+});
+
 const nextDay = (d) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); };
 
 /* ================================================================== Stellen-Liste */
@@ -500,10 +586,22 @@ DELETE('/api/positions/:id', needAdmin, (req) => {
 });
 
 /* ================================================================== Personen */
+function skillsOf(sub) { return db.prepare('SELECT position_id FROM people_skills WHERE sub=?').all(sub).map((r) => r.position_id); }
+PUT('/api/people/:sub/skills', needPlanner, (req) => {
+  const p = personBySub(req.params.sub);
+  if (!p) fail(404, 'Person nicht gefunden');
+  const valid = new Set(db.prepare('SELECT id FROM positions').all().map((x) => x.id));
+  const ids = [...new Set((Array.isArray(req.body.position_ids) ? req.body.position_ids : []).map(Number))].filter((id) => valid.has(id));
+  tx(() => {
+    db.prepare('DELETE FROM people_skills WHERE sub=?').run(p.sub);
+    for (const id of ids) db.prepare('INSERT INTO people_skills (sub, position_id) VALUES (?,?)').run(p.sub, id);
+  });
+  return { skills: ids };
+});
 GET('/api/people', needPlanner, () => ({
   sync: { enabled: portal.directoryEnabled(), status: portal.directoryStatus(), minutes: SYNC_MINUTES },
   people: db.prepare('SELECT * FROM people ORDER BY active DESC, lower(name), lower(email)').all()
-    .map((p) => ({ ...personOut(p), role: p.role, last_seen: p.last_seen, has_rundown: !!json(p.modules, {}).rundown })),
+    .map((p) => ({ ...personOut(p), role: p.role, last_seen: p.last_seen, has_rundown: !!json(p.modules, {}).rundown, skills: skillsOf(p.sub) })),
 }));
 POST('/api/people/sync', needPlanner, async () => {
   const r = await portal.syncDirectory();
@@ -547,6 +645,8 @@ const server = http.createServer(async (req, res) => {
     if (!pathname.startsWith('/api/')) {
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'Nicht erlaubt' });
       if (pathname === '/auth/portal') return portalLogin(req, res, url);
+      const calM = pathname.match(/^\/cal\/([A-Za-z0-9_-]+)\.ics$/);
+      if (calM) return calendarFeed(req, res, calM[1]);
       if (tryStatic(req, res, pathname)) return;
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', ...SEC_HEADERS });
       return res.end('Nicht gefunden');

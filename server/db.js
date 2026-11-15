@@ -112,6 +112,20 @@ if (!db.prepare('PRAGMA table_info(responses)').all().some((c) => c.name === 'fr
 }
 db.exec("UPDATE responses SET status='later' WHERE status='maybe'");
 
+// Bestätigung der Einteilung, Fähigkeiten pro Person, Kalender-Abo
+const cols = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+if (!cols('assignments').includes('state')) {
+  db.exec("ALTER TABLE assignments ADD COLUMN state TEXT NOT NULL DEFAULT 'pending'"); // pending | confirmed | declined
+  db.exec("ALTER TABLE assignments ADD COLUMN note TEXT NOT NULL DEFAULT ''");         // Grund bei „Geht doch nicht“
+  db.exec('ALTER TABLE assignments ADD COLUMN answered_at TEXT');
+}
+if (!cols('people').includes('cal_token')) db.exec('ALTER TABLE people ADD COLUMN cal_token TEXT');
+db.exec(`CREATE TABLE IF NOT EXISTS people_skills (
+  sub TEXT NOT NULL REFERENCES people(sub) ON DELETE CASCADE,
+  position_id INTEGER NOT NULL REFERENCES positions(id) ON DELETE CASCADE,
+  PRIMARY KEY (sub, position_id)
+)`);
+
 // Stellen-Liste (Vorlage beim Anlegen von Terminen, änderbar unter „Verwaltung → Stellen“).
 // Freie Stellen gibt es beim Anlegen zusätzlich über „Andere …“.
 export const DEFAULT_POSITIONS = ['Regie', 'Grafik', 'Ton', 'Spec', 'Replay', 'Mod', 'Caster'];

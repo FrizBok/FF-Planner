@@ -343,3 +343,102 @@ test('Live-Aktualisierung: andere Browser erfahren sofort von Änderungen, der e
   reader.cancel();
   await pump.catch(() => {});
 });
+
+test('Einteilung bestätigen: Passt / Geht doch nicht gibt die Stelle frei, Planer können für andere markieren', async () => {
+  const paula = await login(PAULA);
+  const max = await login(MAX);
+  const nie = await login(NIE);
+  const id = (await paula.post('/api/events', { title: 'Bestätigen', date: '2030-10-01', status: 'open', slots: [{ name: 'Caster', needed: 1 }] })).data.id;
+  let ev = (await paula.get(`/api/events/${id}`)).data;
+  const slot = ev.slots[0].id;
+  ev = (await paula.post(`/api/events/${id}/assign`, { slot_id: slot, sub: MAX.sub })).data;
+  const aid = ev.slots[0].assigned[0].id;
+  assert.equal(ev.slots[0].assigned[0].state, 'pending');
+  assert.equal(ev.unconfirmed, 1);
+  // Max sieht seine offene Einteilung
+  let mine = (await max.get(`/api/events/${id}`)).data;
+  assert.deepEqual(mine.my_assignments, [{ id: aid, slot: 'Caster', state: 'pending', note: '' }]);
+  // Andere dürfen nicht für Max antworten
+  assert.equal((await nie.post(`/api/events/${id}/assign/${aid}/answer`, { state: 'confirmed' })).status, 403);
+  assert.equal((await max.post(`/api/events/${id}/assign/${aid}/answer`, { state: 'pending' })).status, 403);
+  mine = (await max.post(`/api/events/${id}/assign/${aid}/answer`, { state: 'confirmed' })).data;
+  assert.equal(mine.my_assignments[0].state, 'confirmed');
+  assert.equal(mine.unconfirmed, 0);
+  // „Geht doch nicht“ → Stelle wieder offen, nicht mehr in „Meine Einsätze“
+  mine = (await max.post(`/api/events/${id}/assign/${aid}/answer`, { state: 'declined', note: 'krank' })).data;
+  assert.equal(mine.open, 1);
+  assert.deepEqual(mine.my_slots, []);
+  assert.equal(mine.slots[0].assigned[0].note, 'krank');
+  assert.ok(!(await max.get('/api/events?scope=mine')).data.events.some((e) => e.id === id));
+  // Jemand anderes übernimmt → Max kann nicht mehr „doch dabei“ sagen
+  ev = (await paula.post(`/api/events/${id}/assign`, { slot_id: slot, sub: NIE.sub })).data;
+  assert.equal(ev.open, 0);
+  assert.equal((await max.post(`/api/events/${id}/assign/${aid}/answer`, { state: 'confirmed' })).status, 400);
+  // Planer markiert Nie als bestätigt; erneutes Einteilen von Max nach Absage nur bei freiem Platz
+  const nid = ev.slots[0].assigned.find((a) => a.sub === NIE.sub).id;
+  ev = (await paula.post(`/api/events/${id}/assign/${nid}/answer`, { state: 'confirmed' })).data;
+  assert.ok(ev.log.some((l) => l.detail.includes('(von Planer)')));
+  assert.equal((await paula.post(`/api/events/${id}/assign`, { slot_id: slot, sub: MAX.sub })).status, 400);
+  await paula.patch(`/api/events/${id}`, { slots: [{ id: slot, name: 'Caster', needed: 2 }] });
+  ev = (await paula.post(`/api/events/${id}/assign`, { slot_id: slot, sub: MAX.sub })).data;
+  assert.equal(ev.slots[0].assigned.find((a) => a.sub === MAX.sub).state, 'pending');
+});
+
+test('Fähigkeiten pro Person (nur Planer), sichtbar beim Einteilen', async () => {
+  const paula = await login(PAULA);
+  const max = await login(MAX);
+  const pos = (await paula.get('/api/positions')).data.positions;
+  const regie = pos.find((p) => p.name === 'Regie').id;
+  const replay = pos.find((p) => p.name === 'Replay').id;
+  assert.equal((await max.put(`/api/people/${MAX.sub}/skills`, { position_ids: [regie] })).status, 403);
+  assert.deepEqual((await paula.put(`/api/people/${MAX.sub}/skills`, { position_ids: [regie, replay, 9999, regie] })).data.skills, [regie, replay]);
+  assert.deepEqual((await paula.get('/api/people')).data.people.find((p) => p.sub === MAX.sub).skills.sort(), [regie, replay].sort());
+  assert.deepEqual((await max.get('/api/status')).data.user.skills, ['Regie', 'Replay']);
+  const id = (await paula.post('/api/events', { title: 'Skills', date: '2030-10-02', status: 'open' })).data.id;
+  const ev = (await paula.get(`/api/events/${id}`)).data;
+  assert.deepEqual(ev.people.find((p) => p.sub === MAX.sub).skills.sort(), [regie, replay].sort());
+});
+
+test('Kalender-Abo: geheimer Link mit allen eigenen Einsätzen, neu erzeugbar', async () => {
+  const paula = await login(PAULA);
+  const max = await login(MAX);
+  const c = (await max.get('/api/me/calendar')).data;
+  assert.match(c.url, /\/cal\/[A-Za-z0-9_-]{30,}\.ics$/);
+  assert.match(c.webcal, /^webcal:/);
+  assert.equal((await max.get('/api/me/calendar')).data.url, c.url); // bleibt gleich
+  const id = (await paula.post('/api/events', { title: 'Abo-Test', date: '2030-11-01', start_time: '18:00', end_time: '01:00', status: 'open', slots: [{ name: 'Mod', needed: 1 }] })).data.id;
+  const slot = (await paula.get(`/api/events/${id}`)).data.slots[0].id;
+  await paula.post(`/api/events/${id}/assign`, { slot_id: slot, sub: MAX.sub });
+  const path = new URL(c.url).pathname;
+  let ics = await (await fetch(BASE + path)).text();
+  assert.match(ics, /X-WR-CALNAME:FrankenFinals – Max Kamera/);
+  assert.match(ics, /SUMMARY:Abo-Test \(Mod\)/);
+  assert.match(ics, /DTEND;TZID=Europe\/Berlin:20301102T010000/); // Ende nach Mitternacht
+  assert.match(ics, /URL:.*\/#\/termin\//);
+  // Neuer Link → alter funktioniert nicht mehr
+  const c2 = (await max.post('/api/me/calendar/reset')).data;
+  assert.notEqual(c2.url, c.url);
+  assert.equal((await fetch(BASE + path)).status, 404);
+  assert.equal((await fetch(BASE + new URL(c2.url).pathname)).status, 200);
+  assert.equal((await fetch(BASE + '/cal/raten.ics')).status, 404);
+});
+
+test('Portal-Startseite: „Deine nächsten Einsätze“ nur mit Unterschrift des Portals', async () => {
+  const paula = await login(PAULA);
+  const sig = (sub, secret = SECRET, ts = Math.floor(Date.now() / 1000)) => `Portal ${ts}.${crypto.createHmac('sha256', secret).update(`upcoming:${sub}:${ts}`).digest('base64url')}`;
+  const call = (sub, auth) => fetch(`${BASE}/api/ext/upcoming?sub=${sub}`, { headers: auth ? { Authorization: auth } : {} }).then(async (r) => ({ status: r.status, data: await r.json() }));
+  assert.equal((await call(MAX.sub)).status, 401);
+  assert.equal((await call(MAX.sub, sig(MAX.sub, 'x'.repeat(48)))).status, 401);
+  assert.equal((await call(MAX.sub, sig(NIE.sub))).status, 401); // Unterschrift für andere Person
+  const id = (await paula.post('/api/events', { title: 'Nächster Einsatz', date: '2030-01-05', start_time: '17:00', status: 'open', slots: [{ name: 'Spec', needed: 1 }] })).data.id;
+  const slot = (await paula.get(`/api/events/${id}`)).data.slots[0].id;
+  await paula.post(`/api/events/${id}/assign`, { slot_id: slot, sub: MAX.sub });
+  const r = await call(MAX.sub, sig(MAX.sub));
+  assert.equal(r.status, 200);
+  const item = r.data.items.find((x) => x.id === id);
+  assert.deepEqual(item.slots, ['Spec']);
+  assert.equal(item.pending, true);
+  assert.equal(item.path, `/#/termin/${id}`);
+  assert.ok(r.data.to_answer >= 1);
+  assert.deepEqual((await call('999', sig('999'))).data, { items: [], to_answer: 0 });
+});
