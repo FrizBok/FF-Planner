@@ -1,0 +1,15 @@
+{
+  "name": "ff-planner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FF-Planner – Terminplanung (Termine, Verfügbarkeit, Besetzung) als Modul des Portals FrankenFinals Broadcast",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node --no-warnings server/index.js",
+    "dev": "node --no-warnings --watch server/index.js",
+    "test": "node --no-warnings --test test/*.test.js"
+  },
+  "engines": { "node": ">=22.13" },
+  "license": "MIT"
+}
