@@ -145,6 +145,40 @@ POST('/api/logout', (req, res) => {
   return { ok: true, portal: portal.PORTAL.url || null };
 });
 
+/* ================================================================== Live-Aktualisierung (Server-Sent Events) */
+// Jede Änderung wird an alle offenen Browser gemeldet – nur „was“ sich geändert hat (Art + Termin-ID), keine Inhalte.
+// Die Oberfläche lädt dann selbst nach, mit den Rechten der jeweiligen Person.
+const live = new Set();
+GET('/api/live', needAuth, (req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', ...SEC_HEADERS });
+  res.write('retry: 3000\n\n');
+  const c = { res, sub: req.user.sub };
+  live.add(c);
+  req.on('close', () => live.delete(c));
+  return HANDLED;
+});
+function broadcast(msg) {
+  const data = `data: ${JSON.stringify(msg)}\n\n`;
+  for (const c of live) { try { c.res.write(data); } catch { live.delete(c); } }
+}
+// Verbindung offen halten (Nginx Proxy Manager trennt sonst nach 60 s Stille)
+setInterval(() => { for (const c of live) { try { c.res.write(': ping\n\n'); } catch { live.delete(c); } } }, 25000).unref();
+/** Nach jeder erfolgreichen Änderung: wer muss neu laden? */
+function notifyChange(req, pathname, out) {
+  const from = String(req.headers['x-client-id'] || '').slice(0, 40) || null;
+  let m;
+  if ((m = pathname.match(/^\/api\/events(?:\/(\d+))?/))) {
+    const id = Number(m[1]) || Number(out?.id) || null;
+    broadcast({ kind: 'events', id, deleted: req.method === 'DELETE' && /^\/api\/events\/\d+\/?$/.test(pathname), from });
+  } else if (pathname.startsWith('/api/positions')) broadcast({ kind: 'positions', from });
+  else if (pathname.startsWith('/api/people')) broadcast({ kind: 'people', from });
+}
+/** Personen, die keinen Zugriff mehr haben: Live-Verbindung trennen */
+function dropInactive() {
+  const active = new Set(db.prepare('SELECT sub FROM people WHERE active=1').all().map((p) => p.sub));
+  for (const c of live) if (!active.has(c.sub)) { try { c.res.end(); } catch { /* */ } live.delete(c); }
+}
+
 /* ================================================================== Termine */
 const STATUS = ['draft', 'open', 'closed', 'cancelled'];
 const RESP = ['yes', 'later', 'online', 'no']; // vor Ort · später (ab Uhrzeit) · online · kann nicht
@@ -474,6 +508,7 @@ GET('/api/people', needPlanner, () => ({
 POST('/api/people/sync', needPlanner, async () => {
   const r = await portal.syncDirectory();
   if (!r.ok) fail(502, r.error);
+  dropInactive();
   return r;
 });
 
@@ -535,7 +570,11 @@ const server = http.createServer(async (req, res) => {
       for (let i = 0; i < r.handlers.length; i++) {
         const out = await r.handlers[i](req, res);
         if (out === HANDLED) return;
-        if (i === r.handlers.length - 1) return send(res, 200, out ?? { ok: true });
+        if (i === r.handlers.length - 1) {
+          send(res, 200, out ?? { ok: true });
+          if (req.method !== 'GET' && pathname !== '/api/logout') notifyChange(req, pathname, out);
+          return;
+        }
       }
       return;
     }
@@ -555,13 +594,18 @@ server.listen(PORT, HOST, () => {
   console.log(`  Rundown:   ${rd.rundownApi() ? rd.RUNDOWN.url : rd.rundownLinked() ? rd.RUNDOWN.url + ' (nur Links, RUNDOWN_API_SECRET fehlt)' : 'nicht verbunden'}`);
   console.log('');
   if (portal.directoryEnabled()) {
-    const run = () => portal.syncDirectory().then((r) => { if (!r.ok) console.warn('  Mitgliederliste:', r.error); });
+    const run = () => portal.syncDirectory().then((r) => {
+      if (!r.ok) return console.warn('  Mitgliederliste:', r.error);
+      dropInactive();
+      broadcast({ kind: 'people', from: null });
+    });
     setTimeout(run, 1500).unref();
     setInterval(run, SYNC_MINUTES * 60000).unref();
   }
 });
 
 function shutdown(code = 0) {
+  for (const c of live) { try { c.res.end(); } catch { /* */ } }
   server.close(() => { try { db.close(); } catch { /* */ } process.exit(code); });
   setTimeout(() => process.exit(code), 3000).unref();
 }
