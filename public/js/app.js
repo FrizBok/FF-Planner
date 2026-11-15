@@ -12,11 +12,15 @@ const STATUS = {
   closed: { label: 'Abfrage beendet', cls: 'accent' },
   cancelled: { label: 'Abgesagt', cls: 'red' },
 };
+// Rückmeldungen: vor Ort (grün) · später mit Uhrzeit (orange) · online (blau) · kann nicht (rot)
 const RESP = {
-  yes: { label: 'Kann', icon: 'check' },
-  maybe: { label: 'Vielleicht', icon: 'help' },
-  no: { label: 'Kann nicht', icon: 'x' },
+  yes: { label: 'Vor Ort', icon: 'mapPin', chip: 'green' },
+  later: { label: 'Später', icon: 'clock', chip: 'orange' },
+  online: { label: 'Online', icon: 'monitor', chip: 'blue' },
+  no: { label: 'Kann nicht', icon: 'x', chip: 'red' },
 };
+/** Text einer Rückmeldung, z. B. „Später ab 17:00“ */
+const respText = (r) => (r.status === 'later' && r.from_time ? `Später ab ${r.from_time}` : RESP[r.status]?.label || r.status);
 const ROLE = { member: 'Mitglied', planner: 'Planer', admin: 'Planer-Admin' };
 const planner = () => !!S.user?.can_plan;
 const busy = async (btn, fn) => { if (btn) btn.disabled = true; try { return await fn(); } catch (e) { toast(e.message, 'err'); } finally { if (btn) btn.disabled = false; } };
@@ -63,17 +67,42 @@ function shell(path, ...content) {
 }
 
 /* ------------------------------------------------------------ Rückmelde-Knöpfe */
-function respButtons(ev, { big = false, sub = null, onDone } = {}) {
-  const cur = ev.my_response?.status || null;
+/** Dialog für eine Rückmeldung mit Uhrzeit (bei „Später“) und Kommentar – auch für Planer, die für andere eintragen */
+function responseDialog(ev, status, { sub = null, who = null, current = null, onDone } = {}) {
+  const r = RESP[status];
+  const time = input({ type: 'time', value: current?.from_time || ev.start_time || '', required: true });
+  const comment = h('textarea', { class: 'input', rows: 2, maxlength: 300, placeholder: status === 'later' ? 'Optional: warum später, z. B. „Arbeit bis 16 Uhr“' : status === 'no' ? 'Optional: Grund' : 'Optional: Kommentar' }, current?.comment || '');
+  const err = h('div', { class: 'form-error' });
+  const m = modal({
+    title: (who ? `${who}: ` : '') + r.label,
+    body: h('div', null,
+      status === 'later' ? field(who ? 'Ab wann ist die Person da?' : 'Ab wann bist du da?', time, ev.start_time ? `Beginn ist ${ev.start_time} Uhr${ev.meet_time ? `, Treffen ${ev.meet_time} Uhr` : ''}.` : null) : null,
+      field('Kommentar', comment), err),
+    actions: [{ label: 'Abbrechen', class: 'ghost' }, { label: 'Speichern', class: 'primary', onClick: async () => {
+      try {
+        onDone?.(await put(`/api/events/${ev.id}/response`, { status, comment: comment.value, ...(status === 'later' ? { from_time: time.value } : {}), ...(current?.wishes && status !== 'no' ? { wishes: current.wishes } : {}), ...(sub ? { sub } : {}) }));
+      } catch (e) { err.textContent = e.message; return false; }
+    } }],
+  });
+  setTimeout(() => (status === 'later' ? time : comment).focus(), 40);
+  return m;
+}
+
+function respButtons(ev, { big = false, onDone } = {}) {
+  const mine = ev.my_response || null;
+  const cur = mine?.status || null;
   const wrap = h('div', { class: 'rsp' + (big ? ' big' : '') });
   for (const [k, r] of Object.entries(RESP)) {
+    const label = k === 'later' && cur === 'later' && mine.from_time ? `ab ${mine.from_time}` : r.label;
     wrap.append(h('button', { type: 'button', class: k + (cur === k ? ' sel' : ''), title: r.label, onclick: async (e) => {
       e.preventDefault(); e.stopPropagation();
+      // „Später“ braucht eine Uhrzeit → Dialog (auch zum Ändern der Uhrzeit)
+      if (k === 'later') return responseDialog(ev, 'later', { current: mine, onDone });
       await busy(e.currentTarget, async () => {
-        const d = await put(`/api/events/${ev.id}/response`, { status: cur === k && !big ? null : k, ...(sub ? { sub } : {}) });
+        const d = await put(`/api/events/${ev.id}/response`, { status: cur === k && !big ? null : k });
         onDone?.(d);
       });
-    } }, icon(r.icon), h('span', { class: 'lbl' }, r.label)));
+    } }, icon(r.icon), h('span', { class: 'lbl' }, label)));
   }
   return wrap;
 }
@@ -95,10 +124,10 @@ function eventCard(ev, { onChange } = {}) {
         fullTxt ? h('span', { class: 'chip ' + (ev.open ? 'amber' : 'green') }, fullTxt) : null,
         ev.open ? h('span', { class: 'chip' }, `${ev.open} offen`) : null,
         ev.rundown ? h('span', { class: 'chip' }, icon('list'), 'Rundown') : null,
-        h('span', { class: 'counts', title: 'Kann · Vielleicht · Kann nicht' },
-          h('span', { class: 'y' }, icon('check'), ev.counts.yes), h('span', { class: 'm' }, icon('help'), ev.counts.maybe), h('span', { class: 'n' }, icon('x'), ev.counts.no)))),
+        h('span', { class: 'counts', title: 'Vor Ort · Später · Online · Kann nicht' },
+          Object.entries(RESP).map(([k, r]) => h('span', { class: 'c-' + k }, icon(r.icon), ev.counts[k] || 0))))),
     h('div', { class: 'ev-side' },
-      ev.respond_open ? respButtons(ev, { onDone: onChange }) : ev.my_response ? h('span', { class: 'chip ' + ({ yes: 'green', maybe: 'amber', no: 'red' }[ev.my_response.status]) }, RESP[ev.my_response.status].label) : null));
+      ev.respond_open ? respButtons(ev, { onDone: onChange }) : ev.my_response ? h('span', { class: 'chip ' + RESP[ev.my_response.status]?.chip }, respText(ev.my_response)) : null));
 }
 
 function groupByMonth(events) {
@@ -237,16 +266,22 @@ function myCard(ev, repaint) {
   const canEdit = ev.respond_open || ev.can_plan;
   if (canEdit) body.append(respButtons({ ...ev, my_response: mine || null }, { big: true, onDone: repaint }));
   else body.append(h('div', { class: 'notice' + (mine ? '' : ' warn') }, icon('info'),
-    mine ? `Deine Rückmeldung: ${RESP[mine.status].label}.` : 'Du hast keine Rückmeldung gegeben.',
+    mine ? `Deine Rückmeldung: ${respText(mine)}.` : 'Du hast keine Rückmeldung gegeben.',
     ev.status === 'open' ? ' Die Rückmeldefrist ist vorbei.' : ev.status === 'closed' ? ' Die Abfrage ist beendet.' : ''));
   if (ev.respond_until && ev.status === 'open') body.append(h('small', { class: 'hint' }, `Rückmeldung bis ${fmtShort(ev.respond_until)}`));
-  if (mine && mine.status !== 'no' && canEdit) {
-    const c = input({ value: mine.comment || '', placeholder: 'Kommentar, z. B. „erst ab 17 Uhr“', maxlength: 300 });
-    const save = () => { if (c.value !== (mine.comment || '')) busy(null, async () => { repaint(await put(`/api/events/${ev.id}/response`, { status: mine.status, comment: c.value, wishes: mine.wishes })); toast('Gespeichert', 'ok'); }); };
-    c.addEventListener('change', save);
+  if (mine && canEdit) {
+    const c = input({ value: mine.comment || '', maxlength: 300,
+      placeholder: { yes: 'Kommentar (optional)', later: 'Warum später? (optional)', online: 'Kommentar (optional)', no: 'Grund (optional)' }[mine.status] });
+    const save = (extra) => busy(null, async () => { repaint(await put(`/api/events/${ev.id}/response`, { status: mine.status, comment: c.value, wishes: mine.wishes, ...extra })); toast('Gespeichert', 'ok'); });
+    if (mine.status === 'later') {
+      const t = input({ type: 'time', value: mine.from_time || '' });
+      t.addEventListener('change', () => { if (t.value && t.value !== mine.from_time) save({ from_time: t.value }); });
+      body.append(field('Ab wann bist du da?', t));
+    }
+    c.addEventListener('change', () => { if (c.value !== (mine.comment || '')) save(); });
     c.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); c.blur(); } });
     body.append(c);
-    if (ev.slots.length) {
+    if (mine.status !== 'no' && ev.slots.length) {
       const wishes = new Set(mine.wishes || []);
       body.append(h('div', null, h('small', { class: 'hint' }, 'Was würdest du gern machen? (optional)'),
         h('div', { class: 'wish-chips' }, ev.slots.map((s) => h('button', { type: 'button', class: wishes.has(s.id) ? 'sel' : '', onclick: (e) => busy(e.currentTarget, async () => {
@@ -254,10 +289,6 @@ function myCard(ev, repaint) {
           repaint(await put(`/api/events/${ev.id}/response`, { status: mine.status, comment: c.value, wishes: [...wishes] }));
         }) }, wishes.has(s.id) ? icon('star') : null, s.name)))));
     }
-  } else if (mine && mine.status === 'no' && canEdit) {
-    const c = input({ value: mine.comment || '', placeholder: 'Grund (optional)', maxlength: 300 });
-    c.addEventListener('change', () => busy(null, async () => repaint(await put(`/api/events/${ev.id}/response`, { status: 'no', comment: c.value }))));
-    body.append(c);
   }
   return h('div', { class: 'card card-pad' }, h('div', { class: 'card-head' }, h('h3', null, 'Deine Rückmeldung')), body);
 }
@@ -288,8 +319,9 @@ function slotsCard(ev, repaint) {
     const people = s.assigned.map((a) => {
       const r = respOf.get(a.sub);
       const warn = r?.status === 'no';
-      return h('span', { class: 'pill' + (a.sub === S.user.sub ? ' mine' : '') + (warn ? ' warn' : '') + (a.active ? '' : ' off'), title: warn ? `${a.name} hat abgesagt` : a.active ? a.email : `${a.name} hat keinen Zugriff mehr` },
+      return h('span', { class: 'pill' + (a.sub === S.user.sub ? ' mine' : '') + (warn ? ' warn' : '') + (a.active ? '' : ' off'), title: warn ? `${a.name} hat abgesagt` : r ? `${a.name}: ${respText(r)}` : a.active ? a.email : `${a.name} hat keinen Zugriff mehr` },
         avatar(a, r?.status || 'none'), h('span', { class: 'nm' }, a.name),
+        r?.status === 'later' && r.from_time ? h('small', { class: 'pt later' }, `ab ${r.from_time}`) : r?.status === 'online' ? h('small', { class: 'pt online' }, 'online') : null,
         p ? h('button', { class: 'x', title: 'Entfernen', 'aria-label': `${a.name} entfernen`, onclick: (e) => busy(e.currentTarget, async () => repaint(await del(`/api/events/${ev.id}/assign/${a.id}`))) }, icon('x')) : null);
     });
     const open = Array.from({ length: s.open }, (_, i) => (p
@@ -309,7 +341,7 @@ function pickPerson(anchor, ev, slot, repaint) {
   const respOf = new Map(ev.responses.map((r) => [r.sub, r]));
   const search = input({ placeholder: 'Name suchen …', type: 'search' });
   const list = h('div', { class: 'picker-list' });
-  const order = [['yes', 'Kann'], ['maybe', 'Vielleicht'], [null, 'Keine Rückmeldung'], ['no', 'Kann nicht']];
+  const order = [['yes', 'Vor Ort'], ['later', 'Später'], ['online', 'Online'], [null, 'Keine Rückmeldung'], ['no', 'Kann nicht']];
   const paint = () => {
     const q = search.value.trim().toLowerCase();
     const people = (ev.people || []).filter((x) => !taken.has(x.sub) && (!q || x.name.toLowerCase().includes(q) || x.email.toLowerCase().includes(q)));
@@ -320,7 +352,7 @@ function pickPerson(anchor, ev, slot, repaint) {
       return [h('div', { class: 'picker-sec' }, `${label} · ${items.length}`), items.map((x) => {
         const r = respOf.get(x.sub);
         const wish = r?.wishes?.includes(slot.id);
-        const sub = [otherSlots.has(x.sub) ? `schon: ${otherSlots.get(x.sub).join(', ')}` : '', r?.comment || '', x.kind === 'guest' ? 'Gast' : ''].filter(Boolean).join(' · ');
+        const sub = [r?.status === 'later' && r.from_time ? `ab ${r.from_time}` : '', otherSlots.has(x.sub) ? `schon: ${otherSlots.get(x.sub).join(', ')}` : '', r?.comment || '', x.kind === 'guest' ? 'Gast' : ''].filter(Boolean).join(' · ');
         return h('button', { class: 'picker-item' + (st === 'no' ? ' no' : ''), onclick: async () => {
           if (st === 'no' && !(await confirmDialog(`${x.name} hat für diesen Termin abgesagt. Trotzdem als ${slot.name} einteilen?`, { title: 'Trotzdem einteilen?', okLabel: 'Einteilen', danger: false }))) return;
           closePop();
@@ -340,17 +372,19 @@ function pickPerson(anchor, ev, slot, repaint) {
 /* ---------- Rückmeldungen */
 function responsesCard(ev, repaint) {
   const p = ev.can_plan;
-  const by = { yes: [], maybe: [], no: [] };
+  const by = { yes: [], later: [], online: [], no: [] };
   for (const r of ev.responses) by[r.status]?.push(r);
   const personRow = (x, st) => {
     const tag = p ? 'button' : 'div';
     return h(tag, { class: 'resp-person', type: p ? 'button' : null, onclick: p ? (e) => menu(e.currentTarget, [
       { section: x.name },
-      ...Object.entries(RESP).filter(([k]) => k !== st).map(([k, r]) => ({ label: `Eintragen: ${r.label}`, icon: r.icon, onClick: () => busy(null, async () => repaint(await put(`/api/events/${ev.id}/response`, { status: k, sub: x.sub }))) })),
+      ...Object.entries(RESP).map(([k, r]) => ({ label: `Eintragen: ${r.label}`, icon: r.icon, active: k === st,
+        onClick: () => responseDialog(ev, k, { sub: x.sub, who: x.name, current: st ? x : null, onDone: repaint }) })),
       st ? { label: 'Rückmeldung entfernen', icon: 'trash', onClick: () => busy(null, async () => repaint(await put(`/api/events/${ev.id}/response`, { status: null, sub: x.sub }))) } : null,
     ]) : null },
     avatar(x, st || 'none'),
     h('span', { class: 't' }, h('span', null, x.name, x.kind === 'guest' ? h('small', null, ' · Gast') : null),
+      st === 'later' && x.from_time ? h('small', { class: 'tm' }, `ab ${x.from_time} Uhr`) : null,
       x.wishes?.length ? h('small', null, '★ ' + x.wishes.map((id) => ev.slots.find((s) => s.id === id)?.name).filter(Boolean).join(', ')) : null,
       x.comment ? h('span', { class: 'c' }, x.comment) : null,
       x.by_planner ? h('small', null, 'von Planer eingetragen') : null));
@@ -360,7 +394,7 @@ function responsesCard(ev, repaint) {
     items.length ? items.map((x) => personRow(x, st)) : h('div', { class: 'resp-empty' }, '–'));
   return h('div', { class: 'card card-pad' }, h('div', { class: 'card-head' }, h('h3', null, 'Rückmeldungen')),
     h('div', { class: 'resp-cols' },
-      col('yes', 'Kann', 'check', by.yes), col('maybe', 'Vielleicht', 'help', by.maybe), col('no', 'Kann nicht', 'x', by.no),
+      Object.entries(RESP).map(([k, r]) => col(k, r.label, r.icon, by[k])),
       p ? col(null, 'Noch offen', 'clock', ev.no_answer || []) : null));
 }
 

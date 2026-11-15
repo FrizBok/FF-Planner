@@ -11,8 +11,9 @@ ausschließlich über die Kachel im Portal (Single Sign-on).
 
 1. **Termin anlegen** (Planer): Titel, Datum, Treffen/Beginn/Ende, Ort, Beschreibung, optional Rückmeldefrist und die
    **Stellen** (z. B. 1× Regie, 3× Kamera, 1× Ton – aus der Stellen-Liste oder frei benannt). Als Entwurf oder gleich freigeben.
-2. **Freigeben** → alle Mitglieder sehen den Termin und tragen ein: **Kann / Vielleicht / Kann nicht**, mit Kommentar und
-   optional Wunsch-Stellen („würde gern Kamera machen“).
+2. **Freigeben** → alle Mitglieder sehen den Termin und tragen ein:
+   **Vor Ort** (grün) · **Später** mit Uhrzeit „ab wann“ (orange) · **Online** (blau) · **Kann nicht** (rot) –
+   jeweils mit Kommentar, außer bei „Kann nicht“ optional mit Wunsch-Stellen („würde gern Kamera machen“).
 3. **Besetzung** (Planer): Personen auf Stellen einteilen. Die Auswahl sortiert nach Rückmeldung, zeigt Wünsche (★),
    Kommentare und wer schon anderswo eingeteilt ist. Planer können auch für andere eintragen (z. B. Absage per Telefon).
 4. **Offene Stellen** sind überall markiert und auf einer eigenen Seite gesammelt – dort können Mitglieder Interesse melden.
