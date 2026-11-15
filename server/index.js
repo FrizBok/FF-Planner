@@ -147,7 +147,7 @@ POST('/api/logout', (req, res) => {
 
 /* ================================================================== Termine */
 const STATUS = ['draft', 'open', 'closed', 'cancelled'];
-const RESP = ['yes', 'maybe', 'no'];
+const RESP = ['yes', 'later', 'online', 'no']; // vor Ort · später (ab Uhrzeit) · online · kann nicht
 const logEvent = (eventId, actor, action, detail = '') => db.prepare('INSERT INTO event_log (event_id, at, actor, action, detail) VALUES (?,?,?,?,?)').run(eventId, Date.now(), actor?.sub || null, action, String(detail).slice(0, 300));
 
 function getEvent(id) {
@@ -186,7 +186,7 @@ function rundownOut(e, u) {
 }
 
 function summary(e, u) {
-  const counts = { yes: 0, maybe: 0, no: 0 };
+  const counts = { yes: 0, later: 0, online: 0, no: 0 };
   for (const r of db.prepare('SELECT status FROM responses WHERE event_id=?').all(e.id)) counts[r.status] = (counts[r.status] || 0) + 1;
   const slots = slotsOf(e.id);
   const mine = db.prepare('SELECT * FROM responses WHERE event_id=? AND sub=?').get(e.id, u.sub);
@@ -196,7 +196,7 @@ function summary(e, u) {
     counts, needed: slots.reduce((n, s) => n + s.needed, 0), filled: slots.reduce((n, s) => n + Math.min(s.needed, s.assigned.length), 0),
     open: slots.reduce((n, s) => n + s.open, 0),
     open_slots: slots.filter((s) => s.open > 0).map((s) => ({ id: s.id, name: s.name, open: s.open })),
-    my_response: mine ? { status: mine.status, comment: mine.comment, wishes: json(mine.wishes, []) } : null,
+    my_response: mine ? { status: mine.status, from_time: mine.from_time || '', comment: mine.comment, wishes: json(mine.wishes, []) } : null,
     my_slots: slots.filter((s) => s.assigned.some((a) => a.sub === u.sub)).map((s) => s.name),
     rundown: rundownOut(e, u),
   };
@@ -277,7 +277,7 @@ function detail(e, u) {
   const planner = isPlanner(u);
   const slots = slotsOf(e.id);
   const responses = db.prepare('SELECT r.*, p.name, p.email, p.kind, p.active FROM responses r LEFT JOIN people p ON p.sub=r.sub WHERE r.event_id=? ORDER BY r.updated_at').all(e.id)
-    .map((r) => ({ ...personOut({ sub: r.sub, name: r.name, email: r.email || '?', kind: r.kind, active: r.active ?? 0 }), status: r.status, comment: r.comment, wishes: json(r.wishes, []), by_planner: !!r.set_by && r.set_by !== r.sub, updated_at: r.updated_at }));
+    .map((r) => ({ ...personOut({ sub: r.sub, name: r.name, email: r.email || '?', kind: r.kind, active: r.active ?? 0 }), status: r.status, from_time: r.from_time || '', comment: r.comment, wishes: json(r.wishes, []), by_planner: !!r.set_by && r.set_by !== r.sub, updated_at: r.updated_at }));
   const out = { ...summary(e, u), description: e.description, slots, responses, can_plan: planner };
   if (planner) {
     // Alle aktiven Personen mit Zugriff (für die Einteilung, Gäste eingeschlossen)
@@ -343,13 +343,19 @@ PUT('/api/events/:id/response', needAuth, seeEvent, (req) => {
     return detail(e, req.user);
   }
   if (!RESP.includes(req.body.status)) fail(400, 'Ungültige Rückmeldung');
+  const old0 = db.prepare('SELECT * FROM responses WHERE event_id=? AND sub=?').get(e.id, sub);
+  let fromTime = '';
+  if (req.body.status === 'later') {
+    fromTime = str(req.body.from_time ?? old0?.from_time ?? '', 5);
+    if (!TIME_RE.test(fromTime)) fail(400, 'Bitte angeben, ab wann (Uhrzeit HH:MM)');
+  }
   const slotIds = new Set(db.prepare('SELECT id FROM slots WHERE event_id=?').all(e.id).map((s) => s.id));
   const wishes = req.body.status === 'no' ? [] : (Array.isArray(req.body.wishes) ? req.body.wishes : []).map(Number).filter((id) => slotIds.has(id)).slice(0, 20);
-  const old = db.prepare('SELECT * FROM responses WHERE event_id=? AND sub=?').get(e.id, sub);
-  db.prepare(`INSERT INTO responses (event_id, sub, status, comment, wishes, set_by, updated_at) VALUES (?,?,?,?,?,?,datetime('now'))
-    ON CONFLICT(event_id, sub) DO UPDATE SET status=excluded.status, comment=excluded.comment, wishes=excluded.wishes, set_by=excluded.set_by, updated_at=datetime('now')`)
-    .run(e.id, sub, req.body.status, str(req.body.comment ?? old?.comment ?? '', 300), JSON.stringify([...new Set(wishes)]), req.user.sub);
-  if (sub !== req.user.sub) logEvent(e.id, req.user, 'response_for', `${personBySub(sub).name || personBySub(sub).email}: ${req.body.status}`);
+  db.prepare(`INSERT INTO responses (event_id, sub, status, from_time, comment, wishes, set_by, updated_at) VALUES (?,?,?,?,?,?,?,datetime('now'))
+    ON CONFLICT(event_id, sub) DO UPDATE SET status=excluded.status, from_time=excluded.from_time, comment=excluded.comment, wishes=excluded.wishes, set_by=excluded.set_by, updated_at=datetime('now')`)
+    .run(e.id, sub, req.body.status, fromTime, str(req.body.comment ?? old0?.comment ?? '', 300), JSON.stringify([...new Set(wishes)]), req.user.sub);
+  const LBL = { yes: 'vor Ort', later: `später ab ${fromTime}`, online: 'online', no: 'kann nicht' };
+  if (sub !== req.user.sub) logEvent(e.id, req.user, 'response_for', `${personBySub(sub).name || personBySub(sub).email}: ${LBL[req.body.status]}`);
   return detail(e, req.user);
 });
 

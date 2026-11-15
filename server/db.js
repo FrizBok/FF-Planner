@@ -75,7 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_slots_event ON slots(event_id, sort);
 CREATE TABLE IF NOT EXISTS responses (
   event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   sub TEXT NOT NULL,
-  status TEXT NOT NULL,                       -- yes | maybe | no
+  status TEXT NOT NULL,                       -- yes (vor Ort) | later (später, ab from_time) | online | no
   comment TEXT NOT NULL DEFAULT '',
   wishes TEXT NOT NULL DEFAULT '[]',          -- Slot-IDs, die die Person gern übernehmen würde
   set_by TEXT,                                -- sub, falls ein Planer die Rückmeldung eingetragen hat
@@ -105,6 +105,12 @@ CREATE TABLE IF NOT EXISTS event_log (
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `);
+
+// Ältere Datenbanken: Uhrzeit für „Später“, „Vielleicht“ gibt es nicht mehr (→ „Später“)
+if (!db.prepare('PRAGMA table_info(responses)').all().some((c) => c.name === 'from_time')) {
+  db.exec("ALTER TABLE responses ADD COLUMN from_time TEXT NOT NULL DEFAULT ''");
+}
+db.exec("UPDATE responses SET status='later' WHERE status='maybe'");
 
 // Beim ersten Start eine sinnvolle Stellen-Liste anlegen (lässt sich unter „Verwaltung“ ändern)
 if (db.prepare('SELECT COUNT(*) AS n FROM positions').get().n === 0) {

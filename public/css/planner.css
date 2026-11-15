@@ -29,21 +29,27 @@ a.ev-card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--card
 .counts { display: inline-flex; gap: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
 .counts span { display: inline-flex; align-items: center; gap: 3px; }
 .counts .ico { width: 12px; height: 12px; }
-.counts .y { color: var(--green-text); }
-.counts .m { color: #fbbf24; }
-.counts .n { color: var(--red-text); }
-:root[data-theme='light'] .counts .m { color: #b45309; }
+.counts .c-yes { color: var(--st-yes); }
+.counts .c-later { color: var(--st-later); }
+.counts .c-online { color: var(--st-online); }
+.counts .c-no { color: var(--st-no); }
 
-/* Kann / Vielleicht / Kann nicht */
+/* Farben der Rückmeldungen: vor Ort grün · später orange · online blau · kann nicht rot */
+:root { --st-yes: var(--green-text); --st-later: #fb923c; --st-online: #60a5fa; --st-no: var(--red-text); --orange: #f97316; --blue: #3b82f6; }
+:root[data-theme='light'] { --st-later: #c2410c; --st-online: #2563eb; }
+.chip.orange { background: color-mix(in srgb, var(--orange) 16%, transparent); color: var(--st-later); }
+.chip.blue { background: color-mix(in srgb, var(--blue) 16%, transparent); color: var(--st-online); }
+
+/* Vor Ort / Später / Online / Kann nicht */
 .rsp { display: inline-flex; padding: 3px; gap: 2px; border-radius: 10px; background: var(--surface-2); }
 .rsp button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 11px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .rsp button .ico { width: 14px; height: 14px; }
 .rsp button:hover { color: var(--text); background: var(--surface-3); }
-.rsp button.sel.yes { background: color-mix(in srgb, var(--green) 22%, var(--surface)); color: var(--green-text); }
-.rsp button.sel.maybe { background: color-mix(in srgb, #f59e0b 22%, var(--surface)); color: #fbbf24; }
-.rsp button.sel.no { background: color-mix(in srgb, var(--red) 22%, var(--surface)); color: var(--red-text); }
-:root[data-theme='light'] .rsp button.sel.maybe { color: #b45309; }
-.rsp.big { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; }
+.rsp button.sel.yes { background: color-mix(in srgb, var(--green) 22%, var(--surface)); color: var(--st-yes); }
+.rsp button.sel.later { background: color-mix(in srgb, var(--orange) 22%, var(--surface)); color: var(--st-later); }
+.rsp button.sel.online { background: color-mix(in srgb, var(--blue) 22%, var(--surface)); color: var(--st-online); }
+.rsp button.sel.no { background: color-mix(in srgb, var(--red) 22%, var(--surface)); color: var(--st-no); }
+.rsp.big { display: grid; grid-template-columns: repeat(4, 1fr); width: 100%; }
 .rsp.big button { height: 44px; justify-content: center; font-size: 14px; }
 .rsp.icons button { padding: 0 9px; }
 .rsp.icons button .lbl { display: none; }
@@ -91,9 +97,13 @@ a.ev-card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--card
 button.pill.open { cursor: pointer; }
 button.pill.open:hover { color: var(--accent-2); border-color: var(--accent); }
 .pill.open .ico { width: 14px; height: 14px; }
-.avatar.yes { --role: var(--green-text); }
-.avatar.maybe { --role: #fbbf24; }
-.avatar.no { --role: var(--red-text); }
+.avatar.yes { --role: var(--st-yes); }
+.avatar.later { --role: var(--st-later); }
+.avatar.online { --role: var(--st-online); }
+.avatar.no { --role: var(--st-no); }
+.pill .pt { font-family: var(--font-mono); font-size: 11px; padding-right: 4px; }
+.pill .pt.later { color: var(--st-later); }
+.pill .pt.online { color: var(--st-online); }
 .avatar.none { --role: var(--muted); }
 
 /* Personen-Auswahl */
@@ -116,10 +126,11 @@ button.pill.open:hover { color: var(--accent-2); border-color: var(--accent); }
 .resp-col h4 { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-2); }
 .resp-col h4 .ico { width: 14px; height: 14px; }
 .resp-col h4 .n { font-family: var(--font-mono); color: var(--muted); font-weight: 500; }
-.resp-col.yes h4 { color: var(--green-text); }
-.resp-col.maybe h4 { color: #fbbf24; }
-.resp-col.no h4 { color: var(--red-text); }
-:root[data-theme='light'] .resp-col.maybe h4 { color: #b45309; }
+.resp-col.yes h4 { color: var(--st-yes); }
+.resp-col.later h4 { color: var(--st-later); }
+.resp-col.online h4 { color: var(--st-online); }
+.resp-col.no h4 { color: var(--st-no); }
+.resp-person .t small.tm { color: var(--st-later); font-family: var(--font-mono); }
 .resp-person { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; align-items: start; padding: 5px 6px; margin: 0 -6px; border-radius: 8px; border: 0; background: transparent; text-align: left; width: calc(100% + 12px); }
 button.resp-person:hover { background: var(--surface-2); }
 .resp-person .avatar { width: 28px; height: 28px; font-size: 11px; }
@@ -210,6 +221,14 @@ button.resp-person:hover { background: var(--surface-2); }
   .tabs a, .tabs button { flex: 1; justify-content: center; padding: 0 8px; }
   .log div { grid-template-columns: 1fr; gap: 0; }
 }
-@media (max-width: 420px) {
+@media (max-width: 560px) {
   .rsp:not(.big) button .lbl { display: none; }
+  .rsp:not(.big) button { padding: 0 12px; }
+  .rsp.big { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Farbe der Rückmeldung schon am Symbol erkennbar */
+.rsp button.yes .ico { color: var(--st-yes); }
+.rsp button.later .ico { color: var(--st-later); }
+.rsp button.online .ico { color: var(--st-online); }
+.rsp button.no .ico { color: var(--st-no); }

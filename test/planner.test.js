@@ -189,7 +189,7 @@ test('Ablauf: Termin anlegen → freigeben → Rückmeldungen → Besetzung → 
   // Abfrage schließen → Mitglieder können nicht mehr ändern, Planer schon
   await paula.patch(`/api/events/${id}`, { status: 'closed' });
   assert.equal((await max.put(`/api/events/${id}/response`, { status: 'no' })).status, 400);
-  assert.equal((await paula.put(`/api/events/${id}/response`, { status: 'maybe', sub: MAX.sub })).status, 200);
+  assert.equal((await paula.put(`/api/events/${id}/response`, { status: 'later', from_time: '19:30', sub: MAX.sub })).status, 200);
 
   // Einteilung entfernen
   const asg = ev.slots.find((s) => s.name === 'Kamera').assigned.find((a) => a.sub === GAST.sub);
@@ -265,4 +265,38 @@ test('Stellen-Liste nur für Planer-Admins änderbar', async () => {
   assert.equal((await chef.patch(`/api/positions/${p.id}`, { active: false })).status, 200);
   assert.equal((await chef.get('/api/positions')).data.positions.find((x) => x.id === p.id).active, false);
   assert.equal((await chef.del(`/api/positions/${p.id}`)).status, 200);
+});
+
+test('Rückmeldungen: vor Ort, später (mit Uhrzeit), online, kann nicht – jeweils mit Kommentar', async () => {
+  const paula = await login(PAULA);
+  const max = await login(MAX);
+  const nie = await login(NIE);
+  const id = (await paula.post('/api/events', { title: 'Stream', date: '2030-08-01', start_time: '18:00', status: 'open' })).data.id;
+  const put = (c, b) => c.put(`/api/events/${id}/response`, b);
+
+  // Später ohne/mit falscher Uhrzeit → abgelehnt
+  assert.equal((await put(max, { status: 'later' })).status, 400);
+  assert.equal((await put(max, { status: 'later', from_time: '25:00' })).status, 400);
+  let ev = (await put(max, { status: 'later', from_time: '19:30', comment: 'Arbeit bis 19 Uhr' })).data;
+  assert.deepEqual(ev.my_response, { status: 'later', from_time: '19:30', comment: 'Arbeit bis 19 Uhr', wishes: [] });
+  // Kommentar ändern ohne Uhrzeit erneut zu schicken → Uhrzeit bleibt
+  ev = (await put(max, { status: 'later', comment: 'doch erst 20 Uhr?' })).data;
+  assert.equal(ev.my_response.from_time, '19:30');
+  // Wechsel auf online → Uhrzeit fällt weg, Kommentar möglich
+  ev = (await put(max, { status: 'online', comment: 'nur Kommentar-Mikro' })).data;
+  assert.equal(ev.my_response.status, 'online');
+  assert.equal(ev.my_response.from_time, '');
+  assert.equal(ev.my_response.comment, 'nur Kommentar-Mikro');
+  ev = (await put(nie, { status: 'no', comment: 'Urlaub' })).data;
+  ev = (await put(paula, { status: 'yes', comment: 'bringe Kabel mit' })).data;
+  assert.deepEqual(ev.counts, { yes: 1, later: 0, online: 1, no: 1 });
+  assert.equal(ev.responses.find((r) => r.sub === NIE.sub).comment, 'Urlaub');
+  assert.equal((await put(max, { status: 'maybe' })).status, 400); // „Vielleicht“ gibt es nicht mehr
+  // Planer trägt „später“ für jemanden ein
+  ev = (await put(paula, { status: 'later', from_time: '20:00', sub: NIE.sub, comment: 'per Telefon' })).data;
+  const n = ev.responses.find((r) => r.sub === NIE.sub);
+  assert.equal(n.status, 'later');
+  assert.equal(n.from_time, '20:00');
+  assert.equal(n.by_planner, true);
+  assert.ok(ev.log.some((l) => l.detail.includes('später ab 20:00')));
 });
