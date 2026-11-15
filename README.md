@@ -21,6 +21,12 @@ ausschließlich über die Kachel im Portal (Single Sign-on).
 
 Weitere Seiten: **Meine Einsätze**, **Verwaltung** (Personen aus dem Portal, Stellen-Liste).
 
+**Live-Aktualisierung:** Alle offenen Browser bekommen Änderungen sofort angezeigt (Rückmeldungen, Einteilungen, neue oder
+geänderte Termine, Stellen-Liste, Personen) – ohne Neuladen. Technik: Server-Sent Events unter `/api/live`; gemeldet wird
+nur *was* sich geändert hat, die Seite lädt dann mit den eigenen Rechten nach. Während jemand tippt oder ein Dialog offen ist,
+wartet die Aktualisierung bis danach. Die Anzeige „Live“ oben zeigt, ob die Verbindung steht. Hinter Nginx Proxy Manager ist
+nichts einzustellen (der Server schickt `X-Accel-Buffering: no` und hält die Verbindung mit einem Ping offen).
+
 ## Rollen (vergeben im Portal unter Benutzer → Module → Terminplanung)
 
 | Rolle | Darf |

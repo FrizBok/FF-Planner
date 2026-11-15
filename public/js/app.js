@@ -1,6 +1,6 @@
 // FF-Planner – Oberfläche (ohne Framework, Design wie im Portal)
 import { h, icon, toast, fill, menu, modal, popover, closePop, confirmDialog, themeToggle } from './ui.js';
-import { get, post, put, patch, del, initials, fmtDay, fmtDayNum, fmtMonShort, fmtMonth, fmtLong, fmtShort, fmtAgo, timeRange, daysUntil } from './api.js';
+import { get, post, put, patch, del, CLIENT_ID, initials, fmtDay, fmtDayNum, fmtMonShort, fmtMonth, fmtLong, fmtShort, fmtAgo, timeRange, daysUntil } from './api.js';
 
 const S = { user: null, status: null, positions: null };
 const root = document.body.appendChild(document.createElement('div'));
@@ -56,11 +56,12 @@ function shell(path, ...content) {
   ]) },
     h('span', { class: 'avatar sm' }, initials(u)),
     h('span', { class: 'user-btn-txt' }, h('b', null, u.name || u.email), h('span', null, u.kind === 'guest' && !u.can_plan ? 'Gast' : ROLE[u.role] || u.role)), icon('chevronDown'));
-  fill(root,
+  fill(QUIET.on ? QUIET.buf : root,
     h('header', { class: 'topbar' },
       h('a', { href: '#/' }, brand()),
       h('nav', { class: 'nav' }, NAV().map((n) => h('a', { href: n.href, class: n.match(path) ? 'active' : '', title: n.label, 'aria-label': n.label }, icon(n.icon), h('span', { class: 'nav-lbl' }, n.label)))),
       h('div', { class: 'spacer' }),
+      liveDot(),
       portalUrl ? h('a', { class: 'icon-btn portal-link', href: portalUrl + '/', title: 'Zum Portal', 'aria-label': 'Zum Portal' }, icon('grid')) : null,
       themeToggle(), userBtn),
     h('main', { class: 'page' }, ...content));
@@ -609,6 +610,67 @@ function renamePosition(p, reload) {
   } }] });
 }
 
+/* ------------------------------------------------------------ Live-Aktualisierung */
+// Der Server meldet über /api/live, was sich geändert hat (Art + Termin-ID). Betrifft es die offene Seite, wird sie
+// still neu geladen – aber nicht, solange jemand tippt oder ein Dialog/Menü offen ist (dann sofort danach).
+const LIVE = { es: null, state: 'off', pending: false, timer: null, wasDown: false };
+function liveDot() {
+  const el = h('span', { class: 'live-dot ' + LIVE.state, title: LIVE.state === 'on' ? 'Live – Änderungen erscheinen sofort' : 'Verbindung wird hergestellt …' }, h('i'), h('span', null, 'Live'));
+  return el;
+}
+function paintDot() {
+  document.querySelectorAll('.live-dot').forEach((d) => {
+    d.className = 'live-dot ' + LIVE.state;
+    d.title = LIVE.state === 'on' ? 'Live – Änderungen erscheinen sofort' : 'Verbindung wird hergestellt …';
+  });
+}
+function startLive() {
+  if (LIVE.es || !window.EventSource) return;
+  const es = new EventSource('/api/live');
+  LIVE.es = es;
+  es.onopen = () => {
+    LIVE.state = 'on'; paintDot();
+    if (LIVE.wasDown) { LIVE.wasDown = false; scheduleRefresh(); } // währenddessen verpasste Änderungen holen
+  };
+  es.onerror = () => {
+    LIVE.state = 'down'; LIVE.wasDown = true; paintDot();
+    if (es.readyState === EventSource.CLOSED) { LIVE.es = null; setTimeout(() => { if (S.user) startLive(); }, 5000); }
+  };
+  es.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    if (msg.from && msg.from === CLIENT_ID) return; // eigene Änderung – schon angezeigt
+    if (msg.kind === 'positions') S.positions = null;
+    const path = location.hash.replace(/^#/, '') || '/';
+    const open = path.match(/^\/termin\/(\d+)$/);
+    if (open && msg.kind === 'events' && msg.id && Number(open[1]) !== msg.id) return; // anderer Termin
+    if (open && msg.deleted) { toast('Dieser Termin wurde gelöscht', 'err'); location.hash = '#/'; return; }
+    if (msg.kind === 'people' && !path.startsWith('/verwaltung') && !open) return;
+    if (msg.kind === 'positions' && !path.startsWith('/verwaltung/stellen')) return;
+    scheduleRefresh();
+  };
+}
+function stopLive() { LIVE.es?.close(); LIVE.es = null; LIVE.state = 'off'; }
+const busyUi = () => !!document.querySelector('.modal-back, .pop') || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+function scheduleRefresh() {
+  LIVE.pending = true;
+  clearTimeout(LIVE.timer);
+  LIVE.timer = setTimeout(async function run() {
+    if (!LIVE.pending || !S.user) return;
+    if (busyUi()) { LIVE.timer = setTimeout(run, 1200); return; }
+    LIVE.pending = false;
+    const y = window.scrollY;
+    // Neue Seite unsichtbar aufbauen und erst fertig austauschen
+    QUIET.on = true; QUIET.buf = document.createElement('div');
+    try { await render(); } finally { QUIET.on = false; }
+    if (QUIET.buf.childNodes.length) root.replaceChildren(...QUIET.buf.childNodes);
+    QUIET.buf = null;
+    window.scrollTo(0, y);
+  }, 250); // mehrere Änderungen kurz hintereinander → einmal laden
+}
+/** Stilles Neuladen: Seite bleibt stehen, bis die neuen Daten da sind (kein „Lädt …“-Flackern) */
+const QUIET = { on: false, buf: null };
+
 /* ------------------------------------------------------------ Router */
 async function render() {
   closePop();
@@ -641,6 +703,7 @@ async function logout() {
   let r;
   try { r = await post('/api/logout'); } catch { /* */ }
   S.user = null;
+  stopLive();
   sessionStorage.setItem('ffpl.redirected', '1'); // nicht sofort wieder anmelden
   if (r?.portal) { location.href = r.portal + '/'; return; }
   render();
@@ -649,10 +712,10 @@ async function logout() {
 async function start() {
   try { S.status = await get('/api/status'); S.user = S.status.user; }
   catch (e) { return authScreen(h('p', null, e.message)); }
-  if (S.user) sessionStorage.removeItem('ffpl.redirected');
+  if (S.user) { sessionStorage.removeItem('ffpl.redirected'); startLive(); } else stopLive();
   render();
 }
 
 window.addEventListener('hashchange', () => render());
-window.addEventListener('ffpl:logout', () => { if (S.user) { S.user = null; start(); } });
+window.addEventListener('ffpl:logout', () => { if (S.user) { S.user = null; stopLive(); start(); } });
 start();

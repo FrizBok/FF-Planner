@@ -1,6 +1,8 @@
 // Dünner Wrapper um fetch – Sitzung läuft über das Cookie ffpl_session (Anmeldung über das Portal).
+/** Kennung dieses Tabs: eigene Änderungen kommen über die Live-Aktualisierung nicht doppelt zurück */
+export const CLIENT_ID = Math.random().toString(36).slice(2, 12);
 export async function api(method, url, body) {
-  const opt = { method, headers: {}, credentials: 'same-origin' };
+  const opt = { method, headers: { 'X-Client-Id': CLIENT_ID }, credentials: 'same-origin' };
   if (body !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
   let r;
   try { r = await fetch(url, opt); } catch { throw new Error('Keine Verbindung zum Server'); }

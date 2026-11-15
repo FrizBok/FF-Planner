@@ -232,3 +232,13 @@ button.resp-person:hover { background: var(--surface-2); }
 .rsp button.later .ico { color: var(--st-later); }
 .rsp button.online .ico { color: var(--st-online); }
 .rsp button.no .ico { color: var(--st-no); }
+
+/* Live-Anzeige in der Kopfleiste */
+.live-dot { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px 0 8px; border-radius: 99px; font-size: 11.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--surface-2); flex: none; }
+.live-dot i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.live-dot.on { color: var(--green-text); }
+.live-dot.on i { background: var(--green); box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 60%, transparent); animation: live-pulse 2s infinite; }
+.live-dot.down i { background: #f59e0b; }
+@keyframes live-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 55%, transparent); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (max-width: 760px) { .live-dot { padding: 0 8px; } .live-dot span { display: none; } }
+@media (prefers-reduced-motion: reduce) { .live-dot.on i { animation: none; } }

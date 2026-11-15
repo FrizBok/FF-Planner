@@ -91,7 +91,7 @@ async function login(p, next) {
     const x = await fetch(BASE + url, { method, headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: b === undefined ? undefined : JSON.stringify(b) });
     return { status: x.status, data: await x.json().catch(() => null) };
   };
-  return { location: r.headers.get('location'), get: (u) => call('GET', u), post: (u, b = {}) => call('POST', u, b), put: (u, b = {}) => call('PUT', u, b), patch: (u, b = {}) => call('PATCH', u, b), del: (u) => call('DELETE', u), raw: (u) => fetch(BASE + u, { headers: { Cookie: cookie } }) };
+  return { cookie, location: r.headers.get('location'), get: (u) => call('GET', u), post: (u, b = {}) => call('POST', u, b), put: (u, b = {}) => call('PUT', u, b), patch: (u, b = {}) => call('PATCH', u, b), del: (u) => call('DELETE', u), raw: (u) => fetch(BASE + u, { headers: { Cookie: cookie } }) };
 }
 const [CHEF, PAULA, MAX, NIE, GAST] = people;
 
@@ -299,4 +299,46 @@ test('Rückmeldungen: vor Ort, später (mit Uhrzeit), online, kann nicht – jew
   assert.equal(n.from_time, '20:00');
   assert.equal(n.by_planner, true);
   assert.ok(ev.log.some((l) => l.detail.includes('später ab 20:00')));
+});
+
+test('Live-Aktualisierung: andere Browser erfahren sofort von Änderungen, der eigene Tab nicht doppelt', async () => {
+  const paula = await login(PAULA);
+  const max = await login(MAX);
+  assert.equal((await fetch(BASE + '/api/live')).status, 401);
+  const res = await max.raw('/api/live');
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/event-stream/);
+  const reader = res.body.getReader();
+  const msgs = [];
+  let buf = '';
+  const pump = (async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buf += new TextDecoder().decode(value);
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+        const line = chunk.split('\n').find((l) => l.startsWith('data: '));
+        if (line) msgs.push(JSON.parse(line.slice(6)));
+      }
+    }
+  })();
+  const waitFor = async (pred) => {
+    for (let i = 0; i < 40; i++) { const m = msgs.find(pred); if (m) return m; await new Promise((r) => setTimeout(r, 50)); }
+    throw new Error('Keine Live-Meldung: ' + JSON.stringify(msgs));
+  };
+  const r = await fetch(BASE + '/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: paula.cookie, 'X-Client-Id': 'tab-paula' }, body: JSON.stringify({ title: 'Live', date: '2030-09-01', status: 'open' }) });
+  const id = (await r.json()).id;
+  const m1 = await waitFor((m) => m.kind === 'events' && m.id === id);
+  assert.equal(m1.from, 'tab-paula');
+  assert.equal(m1.deleted, false);
+  await paula.put(`/api/events/${id}/response`, { status: 'online' });
+  await waitFor((m) => m.kind === 'events' && m.id === id && !m.from);
+  assert.equal((await (await login(CHEF)).del(`/api/events/${id}`)).status, 200);
+  await waitFor((m) => m.deleted && m.id === id);
+  await paula.post('/api/people/sync');
+  await waitFor((m) => m.kind === 'people');
+  reader.cancel();
+  await pump.catch(() => {});
 });
