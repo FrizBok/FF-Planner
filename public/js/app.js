@@ -59,10 +59,12 @@ function shell(path, ...content) {
   fill(QUIET.on ? QUIET.buf : root,
     h('header', { class: 'topbar' },
       h('a', { href: '#/' }, brand()),
-      h('nav', { class: 'nav' }, NAV().map((n) => h('a', { href: n.href, class: n.match(path) ? 'active' : '', title: n.label, 'aria-label': n.label }, icon(n.icon), h('span', { class: 'nav-lbl' }, n.label)))),
+      h('nav', { class: 'nav' },
+        // „Portal“ – in allen Modulen gleich: erster Menüpunkt, Kachel-Icon
+        portalUrl ? h('a', { class: 'nav-portal', href: portalUrl + '/', title: 'Zum Portal', 'aria-label': 'Zum Portal' }, icon('grid'), h('span', { class: 'nav-lbl' }, 'Portal')) : null,
+        NAV().map((n) => h('a', { href: n.href, class: n.match(path) ? 'active' : '', title: n.label, 'aria-label': n.label }, icon(n.icon), h('span', { class: 'nav-lbl' }, n.label)))),
       h('div', { class: 'spacer' }),
       liveDot(),
-      portalUrl ? h('a', { class: 'icon-btn portal-link', href: portalUrl + '/', title: 'Zum Portal', 'aria-label': 'Zum Portal' }, icon('grid')) : null,
       themeToggle(), userBtn),
     h('main', { class: 'page' }, ...content));
 }
