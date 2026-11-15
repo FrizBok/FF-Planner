@@ -20,7 +20,7 @@ ausschließlich über die Kachel im Portal (Single Sign-on).
 5. **Abfrage beenden** → nur noch Planer ändern Rückmeldungen. Termine lassen sich absagen, kopieren und als `.ics` in den Kalender laden.
 
 6. **Einteilung bestätigen**: Eingeteilte sehen „Du bist als Caster eingeteilt“ und antworten mit **Passt** oder **Geht doch
-   nicht** (mit Grund). Bei einer Absage ist die Stelle sofort wieder offen. In der Besetzung zeigt jede Person ✓ bestätigt,
+   nicht** (mit Grund). Bei einer Absage ist die Stelle sofort wieder offen und die Rückmeldung wird „Kann nicht“ (Grund als Kommentar; nicht, solange die Person bei dem Termin noch eine andere Stelle hat). „Doch dabei“ setzt sie wieder auf „Vor Ort“. In der Besetzung zeigt jede Person ✓ bestätigt,
    ? offen oder ✕ abgesagt; Planer können das per Klick auf die Person auch selbst setzen.
 
 Weitere Seiten: **Meine Einsätze** (mit **Kalender-Abo**), **Verwaltung** (Personen mit **Fähigkeiten**, Stellen-Liste).

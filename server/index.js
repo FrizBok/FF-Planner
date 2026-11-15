@@ -438,6 +438,19 @@ POST('/api/events/:id/assign/:aid/answer', needAuth, seeEvent, (req) => {
   }
   const note = state === 'declined' ? str(req.body.note, 300) : '';
   db.prepare(`UPDATE assignments SET state=?, note=?, answered_at=${state === 'pending' ? 'NULL' : "datetime('now')"} WHERE id=?`).run(state, note, a.id);
+  // Rückmeldung mitziehen: „Geht doch nicht“ → „Kann nicht“ (Grund als Kommentar), sofern die Person sonst bei diesem Termin
+  // nirgends mehr eingeteilt ist. „Passt“/„Doch dabei“ → „Vor Ort“, wenn noch keine Rückmeldung oder „Kann nicht“ eingetragen war.
+  const resp = db.prepare('SELECT * FROM responses WHERE event_id=? AND sub=?').get(e.id, a.sub);
+  const upsertResp = (status, comment) => db.prepare(`INSERT INTO responses (event_id, sub, status, from_time, comment, wishes, set_by, updated_at) VALUES (?,?,?,'',?,?,?,datetime('now'))
+    ON CONFLICT(event_id, sub) DO UPDATE SET status=excluded.status, from_time='', comment=excluded.comment, wishes=excluded.wishes, set_by=excluded.set_by, updated_at=datetime('now')`)
+    .run(e.id, a.sub, status, comment, status === 'no' ? '[]' : (resp?.wishes || '[]'), req.user.sub);
+  if (state === 'declined') {
+    const still = db.prepare("SELECT COUNT(*) AS n FROM assignments WHERE event_id=? AND sub=? AND state<>'declined'").get(e.id, a.sub).n;
+    if (!still && resp?.status !== 'no') upsertResp('no', note || resp?.comment || '');
+    else if (!still && note) upsertResp('no', note);
+  } else if (state === 'confirmed' && (!resp || resp.status === 'no')) {
+    upsertResp('yes', resp?.status === 'no' ? '' : resp?.comment || '');
+  }
   const who = a.name || a.email || a.sub;
   const TXT = { confirmed: 'bestätigt', declined: 'abgesagt', pending: 'zurückgesetzt' };
   logEvent(e.id, req.user, 'answer', `${who} · ${a.slot}: ${TXT[state]}${note ? ` („${note}“)` : ''}${a.sub !== req.user.sub ? ' (von Planer)' : ''}`);

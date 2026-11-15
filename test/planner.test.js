@@ -442,3 +442,29 @@ test('Portal-Startseite: „Deine nächsten Einsätze“ nur mit Unterschrift de
   assert.ok(r.data.to_answer >= 1);
   assert.deepEqual((await call('999', sig('999'))).data, { items: [], to_answer: 0 });
 });
+
+test('„Geht doch nicht“ setzt die Rückmeldung auf „Kann nicht“, „Doch dabei“ wieder auf „Vor Ort“', async () => {
+  const paula = await login(PAULA);
+  const max = await login(MAX);
+  const id = (await paula.post('/api/events', { title: 'Absage', date: '2030-12-01', status: 'open', slots: [{ name: 'Mod', needed: 1 }, { name: 'Spec', needed: 1 }] })).data.id;
+  let ev = (await paula.get(`/api/events/${id}`)).data;
+  const [mod, spec] = ev.slots;
+  await max.put(`/api/events/${id}/response`, { status: 'later', from_time: '19:00', comment: 'Arbeit' });
+  ev = (await paula.post(`/api/events/${id}/assign`, { slot_id: mod.id, sub: MAX.sub })).data;
+  ev = (await paula.post(`/api/events/${id}/assign`, { slot_id: spec.id, sub: MAX.sub })).data;
+  const aMod = ev.slots[0].assigned[0].id, aSpec = ev.slots[1].assigned[0].id;
+  // Eine von zwei Stellen abgesagt → Rückmeldung bleibt (noch woanders eingeteilt)
+  ev = (await max.post(`/api/events/${id}/assign/${aMod}/answer`, { state: 'declined', note: 'nur Spec' })).data;
+  assert.equal(ev.my_response.status, 'later');
+  // Letzte Stelle abgesagt → „Kann nicht“ mit Grund
+  ev = (await max.post(`/api/events/${id}/assign/${aSpec}/answer`, { state: 'declined', note: 'krank' })).data;
+  assert.equal(ev.my_response.status, 'no');
+  assert.equal(ev.my_response.comment, 'krank');
+  assert.equal(ev.counts.no, 1);
+  // Doch dabei → wieder „Vor Ort“
+  ev = (await max.post(`/api/events/${id}/assign/${aSpec}/answer`, { state: 'confirmed' })).data;
+  assert.equal(ev.my_response.status, 'yes');
+  // Planer markiert als abgesagt → ebenfalls „Kann nicht“
+  ev = (await paula.post(`/api/events/${id}/assign/${aSpec}/answer`, { state: 'declined', note: '' })).data;
+  assert.equal(ev.responses.find((r) => r.sub === MAX.sub).status, 'no');
+});
