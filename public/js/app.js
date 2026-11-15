@@ -394,9 +394,16 @@ function slotsCard(ev, repaint) {
       const r = respOf.get(a.sub);
       const warn = r?.status === 'no' && a.state !== 'declined';
       const stateTxt = a.state === 'confirmed' ? 'hat bestätigt' : a.state === 'declined' ? `hat abgesagt${a.note ? ` („${a.note}“)` : ''}` : 'noch nicht bestätigt';
-      return h('span', { class: `pill st-${a.state}` + (p ? ' clickable' : '') + (a.sub === S.user.sub ? ' mine' : '') + (warn ? ' warn' : '') + (a.active ? '' : ' off'), tabindex: p ? '0' : null, role: p ? 'button' : null,
+      const own = a.sub === S.user.sub && !p; // Mitglieder: eigenen Namen antippen → Passt / Geht doch nicht
+      const ownMenu = (e) => menu(e.currentTarget, [
+        { section: `Du · ${s.name}` },
+        a.state !== 'confirmed' ? { label: a.state === 'declined' ? 'Doch dabei' : 'Passt – ich bin dabei', icon: 'check', onClick: () => answerAssignment(ev, { ...a, slot: s.name }, 'confirmed', repaint) } : null,
+        a.state !== 'declined' ? { label: 'Geht doch nicht', icon: 'x', onClick: () => answerAssignment(ev, { ...a, slot: s.name }, 'declined', repaint) } : null,
+      ]);
+      return h('span', { class: `pill st-${a.state}` + (p || own ? ' clickable' : '') + (a.sub === S.user.sub ? ' mine' : '') + (warn ? ' warn' : '') + (a.active ? '' : ' off'), tabindex: p || own ? '0' : null, role: p || own ? 'button' : null,
         title: `${a.name}: ${stateTxt}${r ? ' · ' + respText(r) : ''}${a.active ? '' : ' · kein Zugriff mehr'}`,
-        onclick: p ? (e) => { if (e.target.closest('.x')) return; menu(e.currentTarget, [
+        onkeydown: p || own ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } } : null,
+        onclick: own ? ownMenu : p ? (e) => { if (e.target.closest('.x')) return; menu(e.currentTarget, [
           { section: `${a.name} · ${s.name}` },
           a.state !== 'confirmed' ? { label: 'Als bestätigt markieren', icon: 'check', onClick: () => answerAssignment(ev, { ...a, slot: s.name }, 'confirmed', repaint, { who: a.name }) } : null,
           a.state !== 'declined' ? { label: 'Als abgesagt markieren', icon: 'x', onClick: () => answerAssignment(ev, { ...a, slot: s.name }, 'declined', repaint, { who: a.name }) } : null,
