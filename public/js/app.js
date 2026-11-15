@@ -123,7 +123,7 @@ function answerAssignment(ev, a, state, onDone, { who = null } = {}) {
   const note = h('textarea', { class: 'input', rows: 2, maxlength: 300, placeholder: 'z. B. „krank“ oder „Termin verschoben“' });
   const err = h('div', { class: 'form-error' });
   modal({ title: who ? `${who}: ${a.slot} absagen` : `${a.slot} – geht doch nicht`,
-    body: h('div', null, h('p', { class: 'hint', style: { marginTop: 0 } }, 'Die Stelle wird wieder als offen angezeigt, damit die Planer jemand anderen einteilen können.'), field('Grund (optional, sehen die Planer)', note), err),
+    body: h('div', null, h('p', { class: 'hint', style: { marginTop: 0 } }, (who ? 'Die Stelle wird wieder offen und die Rückmeldung auf „Kann nicht“ gesetzt.' : 'Die Stelle wird wieder offen, damit die Planer jemand anderen einteilen können. Deine Rückmeldung wird auf „Kann nicht“ gesetzt.')), field('Grund (optional, sehen die Planer)', note), err),
     actions: [{ label: 'Abbrechen', class: 'ghost' }, { label: 'Absagen', class: 'red', onClick: async () => {
       try { onDone?.(await post(`/api/events/${ev.id}/assign/${a.id}/answer`, { state: 'declined', note: note.value })); } catch (e) { err.textContent = e.message; return false; }
     } }] });
