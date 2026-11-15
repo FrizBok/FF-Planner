@@ -19,7 +19,19 @@ ausschließlich über die Kachel im Portal (Single Sign-on).
 4. **Offene Stellen** sind überall markiert und auf einer eigenen Seite gesammelt – dort können Mitglieder Interesse melden.
 5. **Abfrage beenden** → nur noch Planer ändern Rückmeldungen. Termine lassen sich absagen, kopieren und als `.ics` in den Kalender laden.
 
-Weitere Seiten: **Meine Einsätze**, **Verwaltung** (Personen aus dem Portal, Stellen-Liste).
+6. **Einteilung bestätigen**: Eingeteilte sehen „Du bist als Caster eingeteilt“ und antworten mit **Passt** oder **Geht doch
+   nicht** (mit Grund). Bei einer Absage ist die Stelle sofort wieder offen. In der Besetzung zeigt jede Person ✓ bestätigt,
+   ? offen oder ✕ abgesagt; Planer können das per Klick auf die Person auch selbst setzen.
+
+Weitere Seiten: **Meine Einsätze** (mit **Kalender-Abo**), **Verwaltung** (Personen mit **Fähigkeiten**, Stellen-Liste).
+
+- **Fähigkeiten pro Person** (Planer, *Verwaltung → Personen*): z. B. Regie, Replay. Beim Einteilen stehen Passende oben und
+  sind mit „✓ Replay“ markiert.
+- **Kalender-Abo**: persönlicher, geheimer Link (`/cal/<token>.ics`), den Handy-, Google- oder Outlook-Kalender regelmäßig abrufen –
+  alle eigenen Einsätze (ohne Absagen), Änderungen kommen von selbst nach. „Neuer Link“ macht den alten ungültig.
+  Die Adresse im Link kommt aus der Anfrage (hinter Nginx: `TRUST_PROXY=true`) oder aus `APP_URL`.
+- **Portal-Startseite**: „Deine nächsten Einsätze“ und „x Termine warten auf deine Rückmeldung“ – das Portal fragt dafür
+  `GET /api/ext/upcoming?sub=…` ab (unterschrieben mit demselben Schlüssel wie die Anmeldung).
 
 **Live-Aktualisierung:** Alle offenen Browser bekommen Änderungen sofort angezeigt (Rückmeldungen, Einteilungen, neue oder
 geänderte Termine, Stellen-Liste, Personen) – ohne Neuladen. Technik: Server-Sent Events unter `/api/live`; gemeldet wird

@@ -122,3 +122,13 @@ export function syncDirectory({ fetchImpl = fetch } = {}) {
   return syncing;
 }
 export const directoryStatus = () => { try { return JSON.parse(getSetting('directory_status') || 'null'); } catch { return null; } };
+
+/** Anfrage des Portals für „Deine nächsten Einsätze“: Authorization: Portal <ts>.<sig>, sig = HMAC(Schlüssel, "upcoming:<sub>:<ts>") */
+export function verifyUpcoming(header, sub, secret = PORTAL.secret, now = Date.now()) {
+  if (secret.length < 32 || !sub) return false;
+  const [ts, sig] = String(header || '').replace(/^Portal\s+/i, '').split('.');
+  if (!/^\d+$/.test(ts || '') || !sig || Math.abs(now / 1000 - Number(ts)) > 120) return false;
+  const want = crypto.createHmac('sha256', secret).update(`upcoming:${sub}:${ts}`).digest();
+  const got = Buffer.from(sig, 'base64url');
+  return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
